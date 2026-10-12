@@ -1,0 +1,18 @@
+.vs/
+.idea/
+.venv/
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Game data never belongs in this repository: ROMs, extracted files and built mods.
+*.z64
+*.n64
+*.v64
+*.nsp
+*.xci
+romfs/
+exefs/
+/Mario/
