@@ -142,6 +142,8 @@ def test_moves_are_as_long_as_their_pieces():
     jump = model.move_steps(model.MOVES["m_jump1"])
     assert len(jump) == 12 + 40
     assert jump[-41:] == [("single_jump", 11)] * 41
+    assert model.move_steps(model.MOVES["m_fall"]) == [("general_fall", 0)] * 30  # one pose, held
+    assert model.move_steps(model.MOVES["m_fland"]) == [("general_land", f) for f in range(9, 24)]
     for move in model.MOVES.values():
         part, frame = model.move_spark(move)
         assert part in {"right_hand", "left_hand", "right_foot"}

@@ -1,5 +1,5 @@
 """
-The code this mod adds to the game: Mario's punch, punch, kick, and his jump, double jump and triple jump.
+The code this mod adds to the game: Mario's punch, punch, kick, his three jumps, and his fall.
 
 Everything else the mod does is data the game already reads. A new move is new behaviour, so this
 part is code: an IPS patch of the game's program, which a loader applies before the game starts.
@@ -17,6 +17,8 @@ What the game has
   upward part of that velocity is a jump, and the game brings him down again.
 * **A hit from above.** A thrown Pikmin landing on an enemy sends it a hit of its own kind, which
   kills a Dwarf Bulborb outright. Each enemy's parameters say how many such hits it takes.
+* **No fall.** A leader who walks off an edge stays in the walk state, walking on the air, and
+  cannot be steered until he lands.
 
 What the code does, for the one leader whose model is Mario's and for nobody else
 ---------------------------------------------------------------------------------
@@ -32,6 +34,11 @@ What the code does, for the one leader whose model is Mario's and for nobody els
   the stick moves him as it does on the ground.
 * **Landing on an enemy** sends the hit a thrown Pikmin's landing makes and, if the enemy's life
   did not move, an ordinary blow twice as strong as his punch. Either way he bounces off.
+* **Falling** (the end of `asm/jump.s`). While he walks, his frames off the ground are counted.
+  After a few of them, coming down, the walk state asks for a fall the way a press asks for a
+  jump, and the same state is entered with no leap: he holds his falling pose, the stick steers
+  him, and he lands on enemies as from a jump, with a landing of its own. A press as he lands is
+  the second jump. A step down too small to count never gets that far.
 
 Where it lives
 --------------
@@ -72,7 +79,8 @@ MARIO = 8  # what a leader's actor holds at +0x81c when its model is Alph's, whi
 PUNCHES = ("m_punch1", "m_punch2", "m_kick")
 JUMPS = ("m_jump1", "m_jump2", "m_jump3")
 LANDINGS = ("m_land1", "m_land2", "m_land3")
-CLIPS = PUNCHES + JUMPS + LANDINGS
+FALLS = ("m_fall", "m_fland")  # the fall, and the landing from it
+CLIPS = PUNCHES + JUMPS + LANDINGS + FALLS
 
 # The game's own functions and data that the code calls or reads, by address.
 GAME = {
@@ -97,11 +105,13 @@ ROOM = {
     "room_next": (0x60C50438, 29),
     "room_reach": (0x60C5CABC, 27),
     "room_jump": (0x60E422A8, 342),  # the functions of mission rule types 1 and 2, which no mission uses
+    "room_fall": (0x60E375E4, 236),  # more of those functions
 }
 # The code's memory, past the program's last variable. The punches: moves made so far, and "a press
-# is being taken". The jump: was one asked for; is this state a jump; which of the three; 1 in the
-# air, 2 landing; frames of that (two bytes); frames left in which a press is the next jump up; and
-# the body's "on the ground" byte while the steering borrows it.
+# is being taken". The jump: what was asked for (1 a jump, 2 a fall); what this state is, in the same
+# numbers; which of the three jumps; 1 in the air, 2 landing; frames of that (two bytes; while he
+# walks, his frames off the ground); frames left in which a press is the next jump up; and the
+# body's "on the ground" byte while the steering borrows it.
 PUNCH_STATE = 0x61EB7F00
 JUMP_STATE = 0x61EB7F08
 JUMP_BYTES = {"ASKED": 0, "IS_JUMP": 1, "WHICH": 2, "PHASE": 3, "FRAMES": 4, "WINDOW": 6, "GROUND": 7}
@@ -130,6 +140,8 @@ SETTLE = 3  # frames after leaving the ground before touching it counts as landi
 LONGEST = 512  # frames in the air after which a jump is given up, whatever is under him
 CHAIN = 9  # frames after a landing in which a press is the next jump up
 RUN_ON = 4  # frames of a landing before the stick cuts it short
+FALL_AFTER = 5  # frames off the ground, walking, before it is a fall, so that a small step down is not one
+FALL_SPEED = 30.0  # and how fast he must be coming down by then, in units a second
 
 
 def bits(value: float) -> int:
@@ -168,6 +180,11 @@ def leap(speed: float, height: float) -> tuple[float, float]:
     return math.sqrt(2.0 * GRAVITY * apex), apex
 
 
+def fall_drop() -> float:
+    """How far he has dropped by the frame a fall begins: the smallest step down that shows one."""
+    return 0.5 * GRAVITY * (FALL_AFTER / 30.0) ** 2
+
+
 def symbols(first_clip: int, height: float) -> dict[str, int]:
     """Every name the assembly uses that is not one of its own labels."""
     hit = his_hit()
@@ -187,6 +204,7 @@ def symbols(first_clip: int, height: float) -> dict[str, int]:
         "STOMP_RADIUS": STOMP_REACH,
         "STOMP_FURTHEST": STOMP_REACH,
         "STOMP_POWER": STOMP,
+        "FALL_SPEED": -FALL_SPEED,  # as his upward speed
     }
     return {
         **GAME,
@@ -200,10 +218,12 @@ def symbols(first_clip: int, height: float) -> dict[str, int]:
         "PUNCH_CLIP": first_clip,
         "JUMP_CLIP": first_clip + len(PUNCHES),
         "LAND_CLIP": first_clip + len(PUNCHES) + len(JUMPS),
+        "FALL_CLIP": first_clip + len(PUNCHES) + len(JUMPS) + len(LANDINGS),
         "SETTLE": SETTLE,
         "LONGEST": LONGEST,
         "CHAIN": CHAIN,
         "RUN_ON": RUN_ON,
+        "FALL_AFTER": FALL_AFTER,
     }
 
 
@@ -336,5 +356,10 @@ def build(mod: Mod, first_clip: int, height: float) -> None:
         ", ".join(f"{h:.1f}" for h in heights),
         height,
         STOMP,
+    )
+    logger.info(
+        "  his fall: %d frames after he walks off an edge, by when he has dropped %.1f units",
+        FALL_AFTER,
+        fall_drop(),
     )
     mod.write_patch(BUILD_ID, ips(words))

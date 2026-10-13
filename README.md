@@ -26,6 +26,8 @@ ROM while it runs.
   to go higher; the third needs a run-up, exactly as it did on the N64.
 - **Stomp.** Come down on an enemy and it takes a hit twice as hard as a punch, and he bounces off.
   The small ones are squashed outright.
+- **He falls like Mario.** Walk him off a ledge and he drops in his falling pose, arms up, and
+  lands in a crouch. The stick steers him on the way down.
 
 Everybody else is left alone. Brittany, Charlie and the Pikmin share Alph's animation clips and
 his sound tables, and none of them moves or sounds any different.
@@ -172,6 +174,25 @@ played round five times, and Mario's ninety frames for his. Five rounds of ninet
 ninety-five, so he stands a twentieth slower than he did on the N64, and nobody else stands any
 differently.
 
+### Falling
+
+The last step so far was what happens when he walks off a ledge.
+
+**A leader never falls, as far as the game is concerned.** Walk Alph off a ledge and he keeps
+walking: the game goes on choosing his clip by his speed over the ground, so he strides through
+the air until he lands, and the stick does nothing on the way down. There was no falling animation
+to replace, because none is ever played.
+
+**So a fall is a jump that starts in the air.** The jump's code already holds a pose in the air,
+steers him, lands on things and plays a landing. While Mario walks, the new code counts the frames
+he has spent off the ground. After five of them, coming down, it enters that same state with no
+leap, and with his falling pose from the N64 in place of a jump. Five frames is a drop of about a
+quarter of his height, so a small step down does not count. Because it is the jump underneath, the
+rest comes along: he can be steered as he falls, falling onto an enemy lands on it, and a press as
+he touches down is the double jump.
+
+That took 42 more words of ARM, and five instructions of the jump's own code that now call them.
+
 ## What's in here
 
 | | |
@@ -181,7 +202,7 @@ differently.
 | `mario/model.py` | The skeleton, the mesh, the clips |
 | `mario/voice.py` | What he says, and when |
 | `mario/icons.py` | The HUD and menu pictures |
-| `mario/moves.py`, `mario/asm/` | The new code: the punches and the jumps, in ARM assembly |
+| `mario/moves.py`, `mario/asm/` | The new code: the punches, the jumps and the fall, in ARM assembly |
 | `mario/arm.py` | The assembler |
 | `tests/` | `pytest`. Most run anywhere; set `SM64_ROM` and `PIKMIN3_ROMFS` to also build the mod and read it back the way the game will |
 

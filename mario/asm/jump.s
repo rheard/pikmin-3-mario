@@ -1,9 +1,14 @@
-; Jump, double jump, triple jump, and landing on enemies.
+; Jump, double jump, triple jump, landing on enemies, and falling.
 ;
 ; The game has no jump, but a leader is a body in its physics: give the body an upward speed and
 ; gravity does the rest. A jump is the punch state with different answers. The clip it plays is a
 ; jump's, "look for something to hit" is every frame he is coming down, the place searched is under
 ; him, and the state ends when he has landed. A punch passes straight through to punch.s.
+;
+; A fall is a jump that begins in the air. A leader who walks off an edge stays in the walk state,
+; still walking, and cannot be steered until he lands. For Mario the walk state counts his frames
+; off the ground, and after a few of them it asks for a fall the way a press asks for a jump. The
+; fall's own code is at the end of this file; five lines of the jump's call into it.
 ;
 ; Names in capitals and the game's own functions come from moves.py. The capitals used as offsets
 ; from a pointer to "the jump's bytes" (ASKED, IS_JUMP, WHICH, PHASE, FRAMES, WINDOW, GROUND) are
@@ -36,8 +41,8 @@ walk_at:
     orrs  r1, r1, r2                    ; only from the ground
     moveq r0, #0
     cmp   r0, #0
-    movne r0, #1
-    strb  r0, [r5, #ASKED]              ; a jump is asked for, or is not: the punch state reads this on entering
+    bl    f_walk                        ; 1 for a jump; 2 if there was none and he has walked off an edge
+    strb  r0, [r5, #ASKED]              ; what is asked for, if anything: the punch state reads this on entering
     popeq {r5, pc}
     sub   sp, sp, #8                    ; into the punch state, as the walk state goes into it itself
     mov   r0, sp
@@ -88,7 +93,7 @@ j_enter:
     ldr   r12, bytes_from_enter
 j_enter_at:
     add   r12, pc, r12
-    ldrb  r1, [r12, #ASKED]             ; was a jump asked for?
+    ldrb  r1, [r12, #ASKED]             ; was a jump asked for, or a fall?
     strb  r1, [r12, #IS_JUMP]           ; then this is one
     cmp   r1, #0
     bne   jump_enter
@@ -99,10 +104,10 @@ jump_enter:
     ldrb  r1, [r12, #PHASE]
     cmp   r1, #0                        ; (the state has two ways in; should the game use both, the second finds him
     bne   entered                       ;  in the air already and only says the clip again)
-    bl    next_jump
+    bl    f_enter                       ; a jump: which of the three. A fall leaves from there, with its clip
     bl    lift
 entered:
-    ldrb  r1, [r12, #WHICH]
+    bl    f_entered                     ; a jump: which it is. A fall leaves from there, with its clip
     add   r1, r1, #JUMP_CLIP - 1
     mov   r2, #2                        ; on the whole body
     pop   {r0, r3, r7, pc}
@@ -209,7 +214,7 @@ touch_down:
     strb  r0, [r6, #WINDOW]             ; a press in this many frames is the next jump up
     ldrb  r1, [r6, #WHICH]
     add   r1, r1, #LAND_CLIP - 1
-    bl    play_whole                    ; the landing of this jump
+    bl    f_land                        ; the landing of this jump, or of a fall
     b     j_done
 landed:
     bl    steer_him                     ; he can run on through a landing
@@ -236,7 +241,7 @@ landed:
     b     j_done
 again:
     mov   r12, r6
-    bl    next_jump
+    bl    f_again                       ; whatever he landed from, what follows is a jump: which of the three
     bl    lift
     bl    play_whole
     bic   r5, r5, #0x80000000
@@ -410,3 +415,69 @@ bounce:
     pop   {r4, r5, r6, r8, r9, pc}
 bytes_from_send: .word JUMP_STATE - (send_at + 8)
 bounce_speed:    .word BOUNCE
+
+; ==== his fall: the same state, entered by itself when he has walked off an edge, with no leap ====
+;
+; Each routine here is called from the one place above where the jump's code had a single
+; instruction, and for a jump it does what that instruction did. IS_JUMP holds 2 for a fall.
+.org room_fall
+; ---- the walk state, for him: r0 nonzero if a jump is asked for, r1 nonzero on the ground, r3 his body,
+;      r5 the jump's bytes. Leaves r0 0, 1 (a jump) or 2 (a fall), and the flags saying whether it is 0 ----
+f_walk:
+    ldrh  r2, [r5, #FRAMES]             ; while he walks, these two bytes count his frames off the ground
+    cmp   r1, #0
+    movne r2, #0
+    addeq r2, r2, #1
+    strh  r2, [r5, #FRAMES]
+    cmp   r0, #0
+    movne r0, #1                        ; a jump
+    bxne  lr
+    cmp   r2, #FALL_AFTER
+    bcc   f_walk_done                   ; on the ground, or only just off it: a small step down is not a fall
+    ldr   r1, [r3, #0x120]              ; his upward speed
+    ldr   r2, fall_speed
+    cmp   r1, r2                        ; (both below zero: as bits, the faster fall is the higher number)
+    movhi r0, #2                        ; and coming down: a fall is asked for
+f_walk_done:
+    cmp   r0, #0
+    bx    lr
+fall_speed: .word FALL_SPEED
+
+; ---- entering the state: r12 the jump's bytes, r7 the leader, and on the stack what j_enter put there.
+;      A jump goes on as it did. A fall leaves from here, as j_enter would, with its clip ----
+f_enter:
+    ldrb  r1, [r12, #IS_JUMP]
+    cmp   r1, #2
+    bne   next_jump                     ; a jump: which of the three, and back to where this was called from
+    mov   r1, #1
+    strb  r1, [r12, #PHASE]             ; in the air, and with no leap
+    strb  r1, [r12, #WHICH]             ; a press as he lands is then the jump after the first
+    mov   r1, #SETTLE
+    strh  r1, [r12, #FRAMES]            ; he left the ground frames ago: touching it is landing
+    mov   r1, #0
+    strb  r1, [r12, #WINDOW]
+f_fall_clip:
+    mov   r1, #FALL_CLIP
+    mov   r2, #2                        ; on the whole body
+    pop   {r0, r3, r7, pc}
+
+; ---- the clip to say on entering, when he is in the air already: r12 the jump's bytes ----
+f_entered:
+    ldrb  r1, [r12, #IS_JUMP]
+    cmp   r1, #2
+    beq   f_fall_clip
+    ldrb  r1, [r12, #WHICH]             ; a jump: which of the three it is
+    bx    lr
+
+; ---- landing: r1 the landing's clip if it was a jump, r6 the jump's bytes, r7 the leader ----
+f_land:
+    ldrb  r0, [r6, #IS_JUMP]
+    cmp   r0, #2
+    moveq r1, #FALL_CLIP + 1            ; a fall has a landing of its own
+    b     play_whole
+
+; ---- a press as he lands: r12 the jump's bytes. Whatever he landed from, what follows is a jump ----
+f_again:
+    mov   r1, #1
+    strb  r1, [r12, #IS_JUMP]
+    b     next_jump

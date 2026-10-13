@@ -8,6 +8,13 @@ from mario.errors import BuildError
 FIRST_CLIP = 0x87  # where the game's list puts his first punch
 
 
+def called(address: int, word: int) -> int | None:
+    """Where the call at `address` goes, or None if the word there is not a call."""
+    if word >> 24 != 0xEB:
+        return None
+    return address + 8 + 4 * (((word & 0xFFFFFF) ^ 0x800000) - 0x800000)
+
+
 def test_the_builders_agree_on_the_clips():
     """The code counts clips in the order the model adds them, and every line of voice has a clip."""
     assert tuple(model.MOVES) == moves.CLIPS
@@ -20,10 +27,27 @@ def test_program_fits_its_room():
     hooks = sorted(address for address in words if not moves.in_room(address))
     assert len(hooks) == 10
     for address in hooks:  # each changed word of the game's is a call into the new code
-        assert words[address] >> 24 == 0xEB
-        target = address + 8 + 4 * (((words[address] & 0xFFFFFF) ^ 0x800000) - 0x800000)
+        target = called(address, words[address])
+        assert target is not None
         assert moves.in_room(target)
         assert target in words
+
+
+def test_a_fall_is_reached_through_the_jump():
+    """The fall's code is a stretch of its own, called from five places in the jump's and from nowhere else."""
+    words = moves.program(FIRST_CLIP, model.HEIGHT)
+    (fall, fall_size), (jump, jump_size) = moves.ROOM["room_fall"], moves.ROOM["room_jump"]
+    assert any(fall <= address < fall + 4 * fall_size for address in words)
+    calls = [address for address, word in words.items() if fall <= (called(address, word) or 0) < fall + 4 * fall_size]
+    assert len(calls) == 5
+    assert all(jump <= address < jump + 4 * jump_size for address in calls)
+    assert moves.bits(-moves.FALL_SPEED) in words.values()  # what his upward speed is held against is a downward one
+
+
+def test_a_step_down_is_not_a_fall():
+    """A fall waits until he has dropped a little way, and not so far that he walks on the air."""
+    assert model.HEIGHT / 5 < moves.fall_drop() < model.HEIGHT / 3
+    assert moves.GRAVITY * moves.FALL_AFTER / 30.0 > moves.FALL_SPEED  # by then, falling freely, he is fast enough
 
 
 def test_patch_round_trip():

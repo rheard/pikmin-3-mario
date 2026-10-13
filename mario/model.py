@@ -4,8 +4,8 @@ Alph becomes Mario: the model, his animations, and the game's list of clips.
 What is written
 ---------------
 * `player/pikminAll.szs`: the one model file every leader and Pikmin lives in, with Alph's model
-  rebuilt as Mario and ten clips of his own added.
-* `player/pikminAll_indirect.szs`: the game's list of animation clips, with his nine moves on the
+  rebuilt as Mario and twelve clips of his own added.
+* `player/pikminAll_indirect.szs`: the game's list of animation clips, with his eleven moves on the
   end and the leaders' standing entry pointed at his own standing clip.
 * `effect/effect_common.szs`: the effects, with the light of Alph's antenna put out.
 
@@ -24,9 +24,9 @@ How
   frame, where Mario's own animation puts that part, in the space of the leader bone above it. The
   leader's bones still do the leaders' walk underneath; his cancel it and replace it. Other leaders
   and the Pikmin have no bones by those names, so the same clips play on them unchanged.
-* **Moves.** His punches, kick, jumps and landings are new clips, laid end to end from pieces of his
-  animations. A clip is played by its number in the game's list, so the list gains an entry for
-  each; `moves.py` is the code that plays them.
+* **Moves.** His punches, kick, jumps and landings, and his fall, are new clips, laid end to end
+  from pieces of his animations. A clip is played by its number in the game's list, so the list
+  gains an entry for each; `moves.py` is the code that plays them.
 * **Standing still.** His own is three animations long and the leaders' standing clip is 20
   frames, shared with every Pikmin, so his cannot ride inside it as his walk rides inside theirs.
   He gets a clip of his own, and the entry of the game's list that a leader stands with is pointed
@@ -161,6 +161,9 @@ class Move:
 #     after he leaves the ground. A landing is its animation, whole (the first jump's begins at
 #     frame 22 of data it shares with another). No frame of these clips is "the one that lands":
 #     the code decides that, so they carry no markers.
+#   * Falling is one pose, held until he lands: here for a second, after which the game holds a
+#     clip's last frame itself. The landing from it begins at frame 9 of its data, whose first frame
+#     is that pose.
 # The order is the order the code counts on: `moves.CLIPS`.
 MOVES = {
     "m_punch1": Move(
@@ -185,6 +188,8 @@ MOVES = {
     "m_land1": Move(pieces=(Piece("land_single_jump", 22, 37),), spark=("right_foot", 0)),
     "m_land2": Move(pieces=(Piece("land_double_jump", 0, 17),), spark=("right_foot", 0)),
     "m_land3": Move(pieces=(Piece("triple_jump_land", 0, 31),), spark=("right_foot", 0)),
+    "m_fall": Move(pieces=(Piece("general_fall", 0, 0, held=29),), spark=("right_foot", 0)),
+    "m_fland": Move(pieces=(Piece("general_land", 9, 23),), spark=("right_foot", 0)),
 }
 MOVE_MODEL = "punch"  # the stock clip a new one takes its header from: played once, not looped
 # The leaders' punch draws its spark 4 units along the right arm's bone. In a move that bone has

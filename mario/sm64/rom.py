@@ -54,7 +54,8 @@ Pose = list[tuple[Matrix, Vector]]  # the rotation and position of every part, i
 ANIMATIONS = {
     "walking": 72, "running": 114, "idle_left": 195, "idle_right": 196, "idle_centre": 197,
     "single_jump": 77, "land_single_jump": 78, "double_jump_rise": 80, "double_jump_fall": 76, "land_double_jump": 75,
-    "triple_jump": 193, "triple_jump_land": 192, "backflip": 4, "ground_kick": 102,
+    "triple_jump": 193, "triple_jump_land": 192, "general_fall": 86, "general_land": 87,
+    "backflip": 4, "ground_kick": 102,
     "first_punch": 103, "second_punch": 104, "first_punch_fast": 105, "second_punch_fast": 106,
 }  # fmt: skip
 
