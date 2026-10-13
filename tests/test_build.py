@@ -134,7 +134,7 @@ def test_every_clip_keeps_what_it_had(stock: Bfres, built: Bfres):
     """The game's clips play as they did for everyone else, and hold his bones at rest unless they are his."""
     before = {clip.name: clip for clip in stock.skel_anims()}
     after = {clip.name: clip for clip in built.skel_anims()}
-    assert list(after) == [*before, *model.MOVES]
+    assert list(after) == [*before, *model.MOVES, *model.STANDS]
     skel = built.model(LEADER_MODEL).skel
     own = {bone["name"]: bone for bone in skel.bones if bone["name"].startswith(model.OWN)}
     for name, clip in before.items():
@@ -187,6 +187,37 @@ def test_his_moves_play_back(stock: Bfres, built: Bfres, char: model.Character):
                 assert sum(rotation[r][0] ** 2 for r in range(3)) ** 0.5 == pytest.approx(size, abs=1e-4)
 
 
+def test_his_standing_still_plays_back(stock: Bfres, built: Bfres, char: model.Character, romfs: RomFs):
+    """His standing clip is the leaders' stand, round and round, for their bones, and his own for his."""
+    clip_list = inside(romfs, model.SETTINGS, model.CLIP_LIST)
+    skel0 = stock.model(LEADER_MODEL).skel
+    _, plan = model.plan_skeleton(skel0, char)
+    skel = built.model(LEADER_MODEL).skel
+    names = [bone["name"] for bone in skel.bones]
+    clips = {clip.name: clip for clip in built.skel_anims()}
+    for name, stand in model.STANDS.items():
+        theirs = next(c for c in stock.skel_anims() if c.name == stand.like)
+        period = model.stand_loop(clip_list, stand)
+        poses, targets = model.stand_targets(char, stand, theirs, period, skel0, plan)
+        clip = clips[name]
+        assert clip.frames == len(targets) - 1
+        assert clip.frames % period == 0  # a whole number of rounds of theirs, so both come round together
+        assert built.u32(clip.o + 0x48) == stock.u32(theirs.o + 0x48)  # and it plays round and round, as theirs does
+        assert set(clip.bones()) == set(theirs.bones()) | {model.OWN + part for part in char.frames}
+        for frame, (pose, row) in enumerate(zip(poses, targets, strict=True)):
+            said = clip.pose(float(frame))
+            for bone, values in pose.items():  # what the stock clip says on this frame of its loop
+                for key, value in values.items():
+                    assert said[bone][key] == pytest.approx(value, abs=1e-4)
+            world = played(skel, said)
+            for part, (_, _, _, want) in row.items():
+                assert world[names.index(model.OWN + part)][1] == pytest.approx(want, abs=NEAR)
+        first, last = clip.pose(0.0), clip.pose(float(clip.frames))
+        for bone, values in first.items():  # the last frame is the first again
+            for key, value in values.items():
+                assert last[bone][key] == pytest.approx(value, abs=1e-4)
+
+
 def test_the_mesh_is_his(built: Bfres, char: model.Character):
     """Read back, the two shapes are his triangles; every other shape of the leader's is empty."""
     leader = built.model(LEADER_MODEL)
@@ -202,11 +233,22 @@ def test_the_mesh_is_his(built: Bfres, char: model.Character):
             assert not any(shape.indices())
 
 
-def test_the_clip_list_gains_his_moves(romfs: RomFs, mod: RomFs):
-    """The game's list of clips is the stock one with his moves on the end of its first section."""
+def test_the_clip_list_gains_his_clips(romfs: RomFs, mod: RomFs, char: model.Character):
+    """The game's list is the stock one with the standing entry playing his clip and his moves on the end."""
     old, new = inside(romfs, model.SETTINGS, model.CLIP_LIST), inside(mod, model.SETTINGS, model.CLIP_LIST)
-    assert model.define_moves(old, model.MOVES)[0] == new
-    body = old.partition(b"\r\n{\r\n")[2].partition(b"\r\n}\r\n")[0]
+    stood = model.define_stands(old, char.mario)
+    assert model.define_moves(stood, model.MOVES)[0] == new
+    # Pointing an entry at his clip changes two lines of it, the clip's name and where its loop ends, and
+    # moves nothing: every clip the game plays by its place in the list is where it was.
+    old_lines, stood_lines = old.split(b"\r\n"), stood.split(b"\r\n")
+    assert len(stood_lines) == len(old_lines)
+    assert sum(a != b for a, b in zip(old_lines, stood_lines, strict=True)) == 2 * len(model.STANDS)
+    assert [tag for tag, _, _ in model.clip_entries(stood)] == [tag for tag, _, _ in model.clip_entries(old)]
+    for name, stand in model.STANDS.items():
+        length = model.stand_length(char.mario, stand, model.stand_loop(old, stand))
+        entry = next(entry for entry in model.clip_entries(new) if entry[0] == stand.tag)
+        assert entry == (stand.tag, name, [(0.0, model.LOOP_START), (float(length), model.LOOP_END)])
+    body = stood.partition(b"\r\n{\r\n")[2].partition(b"\r\n}\r\n")[0]
     assert new.partition(b"\r\n{\r\n")[2].startswith(body)
     assert new.partition(b"\r\n}\r\n")[2] == old.partition(b"\r\n}\r\n")[2]
 

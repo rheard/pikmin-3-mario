@@ -4,8 +4,9 @@ Alph becomes Mario: the model, his animations, and the game's list of clips.
 What is written
 ---------------
 * `player/pikminAll.szs`: the one model file every leader and Pikmin lives in, with Alph's model
-  rebuilt as Mario and nine clips of his own added.
-* `player/pikminAll_indirect.szs`: the game's list of animation clips, with those nine on the end.
+  rebuilt as Mario and ten clips of his own added.
+* `player/pikminAll_indirect.szs`: the game's list of animation clips, with his nine moves on the
+  end and the leaders' standing entry pointed at his own standing clip.
 * `effect/effect_common.szs`: the effects, with the light of Alph's antenna put out.
 
 How
@@ -26,6 +27,11 @@ How
 * **Moves.** His punches, kick, jumps and landings are new clips, laid end to end from pieces of his
   animations. A clip is played by its number in the game's list, so the list gains an entry for
   each; `moves.py` is the code that plays them.
+* **Standing still.** His own is three animations long and the leaders' standing clip is 20
+  frames, shared with every Pikmin, so his cannot ride inside it as his walk rides inside theirs.
+  He gets a clip of his own, and the entry of the game's list that a leader stands with is pointed
+  at it. Every leader plays that entry, so for their bones the new clip holds the stock one, round
+  and round, and for his it holds his three animations: the others stand as they always have.
 * **Mesh.** Alph's body and head shapes are overwritten with Mario's triangles, each vertex
   following one bone. Every other shape (helmet, antenna, backpack, eyes) is emptied.
 * **Textures.** His materials are packed into one image per shape and encoded over Alph's colour
@@ -187,6 +193,28 @@ HIT_BONE, HIT_REACH = "rhandjnt", 4.0
 ACTION, MORE = 1024, 2048  # marker flags in the game's list of clips
 LOOP_START, LOOP_END = 2, 4
 
+
+@dataclass(frozen=True)
+class Stand:
+    """
+    A clip of his own that plays where every leader plays one of the game's.
+
+    Attributes:
+        tag: The entry of the game's list of clips that is pointed at it.
+        like: The stock clip that entry names, which the other leaders must go on seeing.
+        pieces: His animations, played one after another and round again.
+    """
+
+    tag: str
+    like: str
+    pieces: tuple[str, ...]
+
+
+# Standing still. In his own game he stands with his knees and elbows bent, bobs once a second and
+# looks to his left, to his right and ahead again: three animations of 30 frames, each ending where
+# the next begins.
+STANDS = {"m_wait": Stand(tag="player_wait", like="wait", pieces=("idle_left", "idle_right", "idle_centre"))}
+
 # Flat material values for Mario (0-255). The specular map's alpha masks diffuse light on the stock
 # leaders (0 only on the glass of the suit's gauges), so it stays near their usual value.
 SPECULAR = (64, 64, 64, 240)
@@ -345,17 +373,86 @@ def write_skeleton(f: Bfres, skel: Skeleton, plan: Plan) -> tuple[Skeleton, list
 # -- clips -----------------------------------------------------------------------------------------
 
 
+def clip_entries(clip_list: bytes) -> list[tuple[str, str, list[tuple[float, int]]]]:
+    """Each entry of the game's list of clips: its tag, the clip it names, and its markers as (frame, flag)."""
+    text = clip_list.decode("utf-8", "replace")
+    entries = []
+    for tag, clip, body in re.findall(r'\{\s*"([^"]+)"\s*"([^"]+)"\s*\d+[ \t]*(.*?)\n\t\}', text, re.DOTALL):
+        marks = [(float(a), int(b)) for a, b in re.findall(r'^\s*([0-9.]+) (\d+) "', body, re.MULTILINE)]
+        entries.append((tag, clip, marks))
+    return entries
+
+
 def clip_loops(clip_list: bytes) -> dict[str, tuple[int, int]]:
     """The first and last frame of each clip's loop for the leaders, from the markers in the game's list."""
-    text = clip_list.decode("utf-8", "replace")
     loops: dict[str, tuple[int, int]] = {}
-    for define, clip, body in re.findall(r'\{\s*"([^"]+)"\s*"([^"]+)"\s*\d+[ \t]*(.*?)\n\t\}', text, re.DOTALL):
-        events = [(float(a), int(b)) for a, b in re.findall(r'^\s*([0-9.]+) (\d+) "', body, re.MULTILINE)]
-        start = [frame for frame, flag in events if flag == LOOP_START]
-        end = [frame for frame, flag in events if flag == LOOP_END]
-        if start and end and (define.startswith("player_") or clip not in loops):
+    for tag, clip, marks in clip_entries(clip_list):
+        start = [frame for frame, flag in marks if flag == LOOP_START]
+        end = [frame for frame, flag in marks if flag == LOOP_END]
+        if start and end and (tag.startswith("player_") or clip not in loops):
             loops[clip] = (int(start[0]), int(end[0]))
     return loops
+
+
+def stand_loop(clip_list: bytes, stand: Stand) -> int:
+    """
+    How many frames the leaders' loop of a stand's entry has, in the game's list of clips.
+
+    Returns:
+        The frame the loop ends on; it begins on frame 0.
+
+    Raises:
+        BuildError: If the entry is not there, names another clip, or does not loop from frame 0.
+    """
+    for tag, clip, marks in clip_entries(clip_list):
+        if tag == stand.tag:
+            start = [frame for frame, flag in marks if flag == LOOP_START]
+            end = [frame for frame, flag in marks if flag == LOOP_END]
+            if clip != stand.like or start != [0.0] or len(end) != 1 or end[0] < 1 or end[0] != int(end[0]):
+                break
+            return int(end[0])
+    raise BuildError(f"{CLIP_LIST} has no entry {stand.tag} that plays {stand.like} round from its first frame")
+
+
+def stand_length(mario: Mario, stand: Stand, period: int) -> int:
+    """
+    How long a stand's clip is.
+
+    It is a whole number of rounds of the leaders' loop, `period` frames each, so that their stand
+    and his come round together at its end.
+
+    Returns:
+        The clip's last frame: the number of rounds that brings his animations nearest the speed
+        they play at in his own game.
+    """
+    return max(1, round(mario.sequence(stand.pieces).frames / period)) * period
+
+
+def define_stands(clip_list: bytes, mario: Mario) -> bytes:
+    """
+    The game's list of clips with each stand's entry naming his clip, and looping over all of it.
+
+    The entry keeps its place, so the number the game plays it by is what it was, and nothing else
+    of the list changes.
+
+    Returns:
+        The new list.
+
+    Raises:
+        BuildError: If an entry is not laid out as expected.
+    """
+    for name, stand in STANDS.items():
+        period = stand_loop(clip_list, stand)
+        old = f'\t\t"{stand.tag}" \r\n\t\t"{stand.like}" \r\n'.encode()
+        head, found, rest = clip_list.partition(old)
+        body, closed, tail = rest.partition(b"\r\n\t}")
+        end = f'{period:.8f} {LOOP_END} "" '.encode()
+        if not found or old in rest or not closed or body.count(end) != 1:
+            raise BuildError(f"the entry {stand.tag} of {CLIP_LIST} is not laid out as expected")
+        new = f'\t\t"{stand.tag}" \r\n\t\t"{name}" \r\n'.encode()
+        last = f'{stand_length(mario, stand, period):.8f} {LOOP_END} "" '.encode()
+        clip_list = head + new + body.replace(end, last) + closed + tail
+    return clip_list
 
 
 def define_moves(clip_list: bytes, moves: dict[str, Move]) -> tuple[bytes, int]:
@@ -484,6 +581,73 @@ def clip_targets(
             row[part] = (prot, porigin, rot, char.place_part(pos))
         frames.append(row)
     return phase, frames
+
+
+def stand_targets(
+    char: Character,
+    stand: Stand,
+    clip: SkelAnim,
+    period: int,
+    skel: Skeleton,
+    plan: Plan,
+) -> tuple[list[Pose], list[dict[str, Target]]]:
+    """
+    For each frame of a stand, what the stock clip does and where his own animations want every part.
+
+    `clip` is the stock clip the stand takes the place of and `period` the frames of its loop, which
+    the leaders' own bones go round and round while his animations play through once.
+
+    Returns:
+        The stock clip's pose on each frame, and the targets frame by frame.
+    """
+    mario = char.mario
+    sequence = mario.sequence(stand.pieces)
+    last = stand_length(mario, stand, period)
+    names = [p.name for p in mario.parts]
+    bone = {b["name"]: i for i, b in enumerate(skel.bones)}
+    seen: dict[int, tuple[Pose, list[Frame]]] = {}
+    poses, frames = [], []
+    for frame in range(last + 1):
+        if frame % period not in seen:
+            pose = clip.pose(float(frame % period))
+            seen[frame % period] = (pose, stock_world(skel, plan, pose))
+        pose, stock = seen[frame % period]
+        t = frame * sequence.frames / float(last)
+        p = mario.pose(sequence.rotations(t), sequence.root(t))
+        row = {}
+        for part in char.frames:
+            rot, pos = p[names.index(part)]
+            prot, porigin = stock[bone[char.stock[part]]]
+            row[part] = (prot, porigin, rot, char.place_part(pos))
+        poses.append(pose)
+        frames.append(row)
+    return poses, frames
+
+
+def stand_tracks(clip: SkelAnim, poses: list[Pose]) -> list[Track]:
+    """
+    A stand's tracks for the leader's own bones: the stock clip's, laid out over the stand's frames.
+
+    Returns:
+        One track for each bone the stock clip moves, in its order.
+
+    Raises:
+        BuildError: If the stock clip leaves a bone's size or rotation to its model.
+    """
+    tracks = []
+    for name, (base, _) in clip.bones().items():
+        if "S" not in base or "R" not in base:
+            raise BuildError(f"clip {clip.name} gives bone {name} no size or no rotation, which is not handled")
+        curves = {}
+        for key, targets in (("S", SCALE_CURVES), ("R", ROTATE_CURVES), ("T", TRANSLATE_CURVES)):
+            if key in base:
+                for k, target in enumerate(targets):
+                    values = [pose[name][key][k] for pose in poses]
+                    if max(values) - min(values) > 1e-9:
+                        curves[target] = values
+        at = poses[0][name]
+        tracks.append((name, tuple(at["S"]), tuple(at["R"]), tuple(at["T"]) if "T" in base else None, curves))
+    return tracks
 
 
 def move_steps(move: Move) -> list[tuple[str, int]]:
@@ -848,11 +1012,11 @@ def split(char: Character) -> tuple[list[Triangle], list[Triangle]]:
     return body, head
 
 
-def remodel(stock: bytes, char: Character, loops: dict[str, tuple[int, int]]) -> bytes:
+def remodel(stock: bytes, char: Character, clip_list: bytes) -> bytes:
     """
     The leaders' model file with Alph rebuilt as Mario.
 
-    `loops` is what `clip_loops` read from the game's list of clips.
+    `clip_list` is the game's own list of clips, for the loops the leaders play them in.
 
     Returns:
         The new model file.
@@ -868,12 +1032,17 @@ def remodel(stock: bytes, char: Character, loops: dict[str, tuple[int, int]]) ->
     stock_clips = {clip.name: clip for clip in f0.skel_anims()}
 
     # Where his animations put each part, in every clip that will carry curves for his bones.
-    targets, swells, poses = {}, {}, {}
+    targets, swells, poses, stood = {}, {}, {}, {}
+    loops = clip_loops(clip_list)
     for name, (which, lean) in CLIPS.items():
         clip = stock_clips[name]
         loop = loops.get(name, (0, clip.frames))
         phase, targets[name] = clip_targets(char, clip, loop, which, lean, skel0, plan)
         logger.info("  clip %-8s his %s, from frame %d of it, leaning %g degrees", name, which, phase, lean)
+    for name, stand in STANDS.items():
+        period = stand_loop(clip_list, stand)
+        stood[name], targets[name] = stand_targets(char, stand, stock_clips[stand.like], period, skel0, plan)
+        logger.info("  stand %-7s %2d frames: %s", name, len(targets[name]), " + ".join(stand.pieces))
     for name, move in MOVES.items():
         poses[name], targets[name] = move_targets(char, move, skel0, plan)
         if move.swell:
@@ -890,16 +1059,21 @@ def remodel(stock: bytes, char: Character, loops: dict[str, tuple[int, int]]) ->
         grower.set_skin_bones(shape.off, sorted({index[OWN + c[4]] for tri in tris for c in tri}))
     for clip in f0.skel_anims():
         grower.add_tracks(clip.o, tracks.get(clip.name, still))
-    # Every change to a stock clip is made; from here the clip list is a copy with the moves on its end.
-    like = stock_clips[MOVE_MODEL].o
-    new_clips = grower.add_clips([(name, len(targets[name]) - 1, like) for name in MOVES])
-    for offset, name in zip(new_clips, MOVES, strict=True):
-        grower.add_tracks(offset, move_rest(skel0, plan, poses[name]) + tracks[name])
+    # Every change to a stock clip is made; from here the clip list is a copy with his clips on its end.
+    # Each is modelled on a stock clip (a move plays once, a stand round and round) and holds, for the
+    # leader's own bones, what that kind of clip must: rest for a move, the stock clip for a stand.
+    added = [(name, stock_clips[MOVE_MODEL].o, move_rest(skel0, plan, poses[name])) for name in MOVES]
+    for name, stand in STANDS.items():
+        like = stock_clips[stand.like]
+        added.append((name, like.o, stand_tracks(like, stood[name])))
+    new_clips = grower.add_clips([(name, len(targets[name]) - 1, like) for name, like, _ in added])
+    for offset, (name, _, theirs) in zip(new_clips, added, strict=True):
+        grower.add_tracks(offset, theirs + tracks[name])
     data = bytearray(grower.finish())
     logger.info(
         "  %d bones and %d clips added; the model file grows by %d bytes",
         len(bones),
-        len(MOVES),
+        len(added),
         len(data) - len(stock),
     )
 
@@ -989,12 +1163,14 @@ def build(rom: Rom, romfs: RomFs, mod: Mod) -> int:
     )
     archive, settings, effects = romfs.read(ARCHIVE), romfs.read(SETTINGS), romfs.read(EFFECTS)
     clip_list = sarc.Sarc(yaz0.decompress(settings)).files()[CLIP_LIST]
-    model = remodel(sarc.Sarc(yaz0.decompress(archive)).files()[MODEL_FILE], char, clip_loops(clip_list))
+    model = remodel(sarc.Sarc(yaz0.decompress(archive)).files()[MODEL_FILE], char, clip_list)
     logger.info("  compressing %s (this is the slow part)", ARCHIVE)
     mod.write(ARCHIVE, repack(archive, {MODEL_FILE: model}))
-    new_list, first = define_moves(clip_list, MOVES)
+    new_list, first = define_moves(define_stands(clip_list, char.mario), MOVES)
     mod.write(SETTINGS, repack(settings, {CLIP_LIST: new_list}))
     logger.info("  his moves are clips %#x to %#x of the game's list", first, first + len(MOVES) - 1)
+    for name, stand in STANDS.items():
+        logger.info("  the leaders' entry %s of that list plays his %s", stand.tag, name)
     ptcl = sarc.Sarc(yaz0.decompress(effects)).files()[EFFECT_FILE]
     mod.write(EFFECTS, repack(effects, {EFFECT_FILE: hide_lights(ptcl)}))
     return first

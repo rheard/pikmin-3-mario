@@ -4,18 +4,40 @@ import math
 import random
 import re
 
+from types import SimpleNamespace
+
 import pytest
 
 from mario import model, voice
 from mario.errors import BuildError
 from mario.geometry import euler_matrix, matmul, matrix_euler, to_local, to_model, transpose
+from mario.sm64.rom import Sequence
 
 CLIP_LIST = (
-    b"20121218 \r\n2 0 0 4 0 0 0 0 \r\n# skeletal \r\n{\r\n"
+    b"20121218 \r\n3 0 0 4 0 0 0 0 \r\n# skeletal \r\n{\r\n"
     b'\t# \r\n\t{\r\n\t\t"wait" \r\n\t\t"wait" \r\n\t\t0 \r\n\t}\r\n'
+    b'\t# \r\n\t{\r\n\t\t"player_wait" \r\n\t\t"wait" \r\n\t\t2 \r\n\t\t0.00000000 2 "" \r\n\t\t19.00000000 4 "" '
+    b"\r\n\t}\r\n"
     b'\t# \r\n\t{\r\n\t\t"player_walk" \r\n\t\t"walk" \r\n\t\t2 \r\n\t\t5.00000000 2 "" \r\n\t\t25.00000000 4 "" '
     b"\r\n\t}\r\n}\r\n# colour \r\n{\r\n}\r\n"
 )
+# Enough of Mario for the list: his three standing animations are 30 frames each.
+HIS = SimpleNamespace(sequence=lambda pieces: SimpleNamespace(frames=30 * len(pieces)))
+
+
+class Turning:
+    """A stand-in for one of his animations: one part turning, and the root rising, steadily from `start`."""
+
+    def __init__(self, frames: int, start: float, step: float) -> None:
+        self.frames, self.start, self.step = frames, start, step
+
+    def root(self, frame: float) -> tuple[float, float, float]:
+        """The root's position at a frame."""
+        return (0.0, self.start + self.step * frame, 0.0)
+
+    def rotations(self, frame: float) -> dict[str, tuple[float, float, float]]:
+        """The one part's angles at a frame."""
+        return {"head": (self.start + self.step * frame, 0.0, 0.0)}
 
 
 def close(a: list, b: list, tolerance: float = 1e-9) -> bool:
@@ -51,8 +73,8 @@ def test_bone_space_round_trip():
 def test_moves_are_added_to_the_end_of_the_list():
     """The clip list gains an entry for each move after its own, and nothing else in it changes."""
     new, first = model.define_moves(CLIP_LIST, model.MOVES)
-    assert first == 2
-    assert new.split(b"\r\n")[1] == b"%d 0 0 4 0 0 0 0 " % (2 + len(model.MOVES))
+    assert first == 3
+    assert new.split(b"\r\n")[1] == b"%d 0 0 4 0 0 0 0 " % (3 + len(model.MOVES))
     body, tail = CLIP_LIST[CLIP_LIST.index(b"{") :].split(b"\r\n}\r\n", 1)
     assert body in new
     assert new.endswith(b"\r\n}\r\n" + tail)
@@ -61,13 +83,55 @@ def test_moves_are_added_to_the_end_of_the_list():
     assert (
         '\r\n\t\t3.00000000 1024 "" \r\n\t\t4.00000000 2048 "" ' in added
     )  # the first punch lands, then takes a press
-    assert model.clip_loops(new) == {"walk": (5, 25)}
+    assert model.clip_loops(new) == {"wait": (0, 19), "walk": (5, 25)}
 
 
 def test_a_list_that_is_not_one_is_refused():
     """Text that is not laid out as the game's list is refused, not guessed at."""
     with pytest.raises(BuildError):
         model.define_moves(b"not a list", model.MOVES)
+
+
+def test_a_sequence_comes_round():
+    """Animations play one after another, a frame a frame, and the last leads back into the first."""
+    sequence = Sequence([Turning(3, 0.0, 1.0), Turning(2, 3.0, 1.5)])
+    assert sequence.frames == 5
+    assert [sequence.rotations(float(frame))["head"][0] for frame in range(6)] == [0.0, 1.0, 2.0, 3.0, 4.5, 0.0]
+    assert sequence.rotations(2.5)["head"][0] == pytest.approx(2.5)  # from the end of one to the start of the next
+    assert sequence.root(3.5)[1] == pytest.approx(3.75)
+    # From the last frame back to the first, an angle goes the short way round and a place straight back.
+    assert sequence.rotations(4.5)["head"][0] == pytest.approx(4.5 + (2 * math.pi - 4.5) / 2)
+    assert sequence.root(4.5)[1] == pytest.approx(2.25)
+
+
+def test_a_stand_takes_over_the_leaders_entry():
+    """The standing entry names his clip and loops over all of it; its place and every other line stay."""
+    stand = model.STANDS["m_wait"]
+    assert model.stand_loop(CLIP_LIST, stand) == 19
+    assert model.stand_length(HIS, stand, 19) == 95  # five rounds of the leaders' loop are the nearest to his ninety
+    new = model.define_stands(CLIP_LIST, HIS)
+    changed = [line for old, line in zip(CLIP_LIST.split(b"\r\n"), new.split(b"\r\n"), strict=True) if old != line]
+    assert changed == [b'\t\t"m_wait" ', b'\t\t95.00000000 4 "" ']
+    assert model.clip_entries(new) == [
+        ("wait", "wait", []),
+        ("player_wait", "m_wait", [(0.0, 2), (95.0, 4)]),
+        ("player_walk", "walk", [(5.0, 2), (25.0, 4)]),
+    ]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        CLIP_LIST.replace(b'"player_wait"', b'"player_rest"'),  # no such entry
+        CLIP_LIST.replace(b'"player_wait" \r\n\t\t"wait"', b'"player_wait" \r\n\t\t"walk"'),  # it plays another clip
+        CLIP_LIST.replace(b"0.00000000 2", b"1.00000000 2"),  # its loop does not start on the first frame
+        CLIP_LIST.replace(b"\t\t19.00000000 4", b"\t\t19.00000000 8"),  # it does not loop at all
+    ],
+)
+def test_a_standing_entry_that_is_not_the_games_is_refused(broken: bytes):
+    """A list whose standing entry is not the one the game has is refused, not pointed somewhere anyway."""
+    with pytest.raises(BuildError):
+        model.define_stands(broken, HIS)
 
 
 def test_moves_are_as_long_as_their_pieces():

@@ -15,6 +15,7 @@ only the US one has been read (SHA-1 9bef1128717f958171a4afac3ed78ee2bb4e86ce as
   `REST` is a T-pose (standing, arms straight out) built from the same joints, for binding a
   skeleton; the game itself has no rest pose, only animations.
 * `animation(n)`: an `Animation` whose `rotations(frame)` and `root(frame)` feed `pose`.
+  `sequence(names)` is several of them end to end, as one `Sequence` that comes round.
 * `image(material)`: a material's texture as rows of RGBA, the decal already laid over the part's
   colour (the game blends the two when it draws), or the flat colour for an untextured part.
 
@@ -38,6 +39,7 @@ from __future__ import annotations
 import math
 import struct
 
+from itertools import starmap
 from pathlib import Path
 
 from mario.errors import BuildError
@@ -50,7 +52,7 @@ Pose = list[tuple[Matrix, Vector]]  # the rotation and position of every part, i
 
 # Animation numbers worth a name here (the game has 209).
 ANIMATIONS = {
-    "walking": 72, "running": 114, "idle_left": 195,
+    "walking": 72, "running": 114, "idle_left": 195, "idle_right": 196, "idle_centre": 197,
     "single_jump": 77, "land_single_jump": 78, "double_jump_rise": 80, "double_jump_fall": 76, "land_double_jump": 75,
     "triple_jump": 193, "triple_jump_land": 192, "backflip": 4, "ground_kick": 102,
     "first_punch": 103, "second_punch": 104, "first_punch_fast": 105, "second_punch_fast": 106,
@@ -438,6 +440,55 @@ class Animation:
         return out
 
 
+class Sequence:
+    """
+    Several of his animations played one after another, as one that comes round.
+
+    Each plays once through, a frame a frame, and the first follows the last. From the last frame
+    of one to the first frame of the next he goes straight across (the short way round for an
+    angle), since his own game shows those two on successive frames. So the pieces have to lead
+    into each other, as his three standing animations do: he looks left, then right, then ahead
+    again, and each ends where the next begins.
+
+    `frames` is how many it has in all; `root` and `rotations` answer as an `Animation`'s do.
+    """
+
+    def __init__(self, pieces: list[Animation]) -> None:
+        self.pieces = pieces
+        self.starts = [sum(piece.frames for piece in pieces[:i]) for i in range(len(pieces))]
+        self.frames = sum(piece.frames for piece in pieces)
+
+    def _at(self, frame: int) -> tuple[Animation, int]:
+        """The piece that shows on a whole frame, and which frame of it."""
+        frame %= self.frames
+        i = max(k for k, start in enumerate(self.starts) if start <= frame)
+        return self.pieces[i], frame - self.starts[i]
+
+    def _around(self, frame: float) -> tuple[tuple[Animation, int], tuple[Animation, int], float]:
+        """The whole frames either side of any frame, and how far it is from the first to the second."""
+        frame %= self.frames
+        before = math.floor(frame)
+        return self._at(before), self._at(before + 1), frame - before
+
+    def root(self, frame: float) -> Vector:
+        """The root's position at a frame."""
+        (a, at_a), (b, at_b), along = self._around(frame)
+        here, there = a.root(float(at_a)), b.root(float(at_b))
+        return tuple(x + (y - x) * along for x, y in zip(here, there, strict=True))
+
+    def rotations(self, frame: float) -> dict[str, Vector]:
+        """{part: (rx, ry, rz) in radians} at a frame."""
+        (a, at_a), (b, at_b), along = self._around(frame)
+        here, there = a.rotations(float(at_a)), b.rotations(float(at_b))
+        if not along:
+            return here
+
+        def short(x: float, y: float) -> float:
+            return x + ((y - x + math.pi) % (2 * math.pi) - math.pi) * along
+
+        return {part: tuple(starmap(short, zip(here[part], there[part], strict=True))) for part in here}
+
+
 # -- Mario --------------------------------------------------------------------------------------------
 
 
@@ -520,6 +571,10 @@ class Mario:
     def animation(self, which: str | int) -> Animation:
         """One of his animations: a name from `ANIMATIONS` or the game's own number."""
         return Animation(self.rom, ANIMATIONS.get(which, which))
+
+    def sequence(self, pieces: tuple[str | int, ...]) -> Sequence:
+        """Several of his animations as one that comes round: see `Sequence`."""
+        return Sequence([self.animation(which) for which in pieces])
 
     def swell_table(self) -> dict[str, tuple[float, ...]]:
         """

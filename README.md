@@ -14,6 +14,8 @@ ROM while it runs.
 
 - **He's Mario.** The model and its textures come straight from the ROM.
 - **He moves like Mario.** His walk and run are the 1996 animations, knees and elbows included.
+- **He stands like Mario.** Left alone he takes his own stance, knees and elbows bent, and looks to
+  his left, to his right and ahead again.
 - **He sounds like Mario.** "Wah!" on a throw, "yah, wah, hoo!" on the punches, "yahoo!" on the
   triple jump.
 - **He's on the HUD.** Every picture of Alph in the game, from the leader button to the map marker
@@ -152,6 +154,23 @@ does nothing to takes an ordinary blow twice as strong as his punch, and he boun
 The jump needed more room than the GamePad's leftovers had, and found it in the functions of two
 kinds of mission rule that no mission in the game uses. All told, Mario's moves are 441 words of
 ARM, reached through ten changed instructions of the original game.
+
+### Standing still
+
+With the moves done, the next step was the smallest thing he does: standing still.
+
+**His stance is longer than theirs.** Every leader stands with one short clip, a loop of nineteen
+frames, and every Pikmin stands with it too. Mario's standing still is three animations, ninety
+frames in all: he looks to his left, to his right and ahead again, and each ends where the next
+begins. That cannot ride inside the shared clip the way his walk does, because the clip is not
+long enough to hold it.
+
+**So the game's list is pointed at a clip of his own.** The game plays a clip by its place in a
+list, and the entry a leader stands with is a line of its own in that list. That one line now names
+a new clip. Every leader plays that entry, so the new clip holds the old stand for their bones,
+played round five times, and Mario's ninety frames for his. Five rounds of nineteen frames is
+ninety-five, so he stands a twentieth slower than he did on the N64, and nobody else stands any
+differently.
 
 ## What's in here
 
