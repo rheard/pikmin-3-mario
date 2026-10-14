@@ -11,6 +11,7 @@ import pytest
 from mario import model, voice
 from mario.errors import BuildError
 from mario.geometry import between, euler_matrix, matmul, matrix_euler, to_local, to_model, transpose
+from mario.sm64.audio import SOUNDS
 from mario.sm64.rom import Sequence
 
 CLIP_LIST = (
@@ -218,3 +219,13 @@ def test_halving_keeps_what_the_new_rate_can_hold():
 def test_a_line_is_named_for_its_clip_and_frame():
     """Each line he says gets a record name of its own in the game's table."""
     assert voice.Line("throw", 1, []).name == "Pikmin/throw/LeaderVoice/1"
+
+
+def test_alphs_voice_is_spelled_out_once():
+    """Each of the game's sounds given to him is named once, with a sound of his that the reader knows."""
+    names = [name for _, sounds in voice.OWN for name, _ in sounds]
+    assert len(names) == len(set(names))
+    assert all(name.count("{}") == 1 for name in names)  # each is named for the leader by his letter
+    assert not any("Demo" in name for name in names)  # the cutscenes' are not his
+    assert {said for _, sounds in voice.OWN for _, said in sounds} <= set(SOUNDS)
+    assert {name for *_, name, _ in voice.IDLE} <= set(SOUNDS)

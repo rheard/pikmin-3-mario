@@ -77,8 +77,19 @@ USER_FIELDS = {
 # (FUN_608366e0). The first sound of the run it lands on then says, with its own `variants`, how
 # many of the run to pick among, each by its `weight`.
 # Kind 2: every Pikmin but Rock and Winged shares slot 0, and the leaders A to E (Alph, Brittany,
-# Charlie, Louie, Olimar) have one each.
-TYPE_SLOTS = {2: {"pikmin": 0, "rock": 1, "winged": 2, "A": 3, "B": 4, "C": 5, "D": 6, "E": 7}}
+# Charlie, Louie, Olimar) have one each. Three more kinds give other Pikmin a run of their own.
+# ("pikmin" is every kind of Pikmin a list does not name.) A family need not have a run for every
+# slot of its kind: one made for the Pikmin alone has two or three, and a leader's place in it
+# falls past its end, on whatever sounds follow it in the archive.
+TYPE_SLOTS = {
+    2: {"pikmin": 0, "rock": 1, "winged": 2, "A": 3, "B": 4, "C": 5, "D": 6, "E": 7},
+    8: {
+        "red": 0, "blue": 1, "yellow": 2, "white": 3, "purple": 4, "rock": 5, "winged": 6,
+        "A": 7, "B": 8, "C": 9, "D": 10, "E": 11,
+    },
+    9: {"pikmin": 0, "yellow": 1, "rock": 2, "winged": 3, "A": 4, "B": 5, "C": 6, "D": 7, "E": 8},
+    10: {"pikmin": 0, "red": 1, "rock": 2, "winged": 3, "A": 4, "B": 5, "C": 6, "D": 7, "E": 8},
+}  # fmt: skip
 
 
 def u16(d: bytes | bytearray, o: int) -> int:

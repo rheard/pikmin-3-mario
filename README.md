@@ -17,7 +17,8 @@ ROM while it runs.
 - **He stands like Mario.** Left alone he takes his own stance, knees and elbows bent, and looks to
   his left, to his right and ahead again.
 - **He sounds like Mario.** "Wah!" on a throw, "yah, wah, hoo!" on the punches, "yahoo!" on the
-  triple jump.
+  triple jump. And wherever Alph used to speak, Mario does: "okey-dokey!" when you switch to him,
+  "mamma mia!" when a bomb goes off beside him, "hello!" when he waves.
 - **He's on the HUD.** Every picture of Alph in the game, from the leader button to the map marker
   to the menus, is painted again as Mario. All 140 of them.
 - **Punch, punch, kick.** With no Pikmin following, A beside an enemy starts a punch. Press again
@@ -235,6 +236,32 @@ noises when they are left standing, and the snores are faint recordings to begin
 Mario you are not playing does not talk over whoever you are.
 
 That took 32 more words of ARM, six more changed instructions of the game, and four more clips.
+
+### The rest of his voice
+
+The last step so far was his voice everywhere else: wherever the game had Alph say something, it
+was still Alph.
+
+**Most of what a leader says is not tied to a clip of his own.** The throw, the punches and the
+jumps were lines added to the game's table of "this clip, this frame, this sound". But a leader's
+cry when he is hit, his call when you switch to him, the noise he makes when another leader throws
+him: the game plays those by name from its own code, or from lines on clips that every Pikmin
+shares. Each name ends, for Alph, at a recording of Alph, and there is nothing to add a line to.
+
+**So Alph's own sounds are pointed somewhere else.** Each of them is an entry in the sound archive
+that says which file to play from and which recording in it, how loud, and so on. Sixty-two of
+Alph's now name one of Mario's recordings and keep everything else, loudness included: the game
+makes a leader's yawn quiet and his cry of pain loud, and so they are for him. He says what he
+says for the nearest thing in his own game: "okey-dokey" when he is chosen, "whoa" when he is
+startled, "yahoo", "waha" or "yippee" when another leader throws him, "here we go" down a slide,
+"hello" as he waves, and his long falling cry down a pit.
+
+**Some of Alph's voice is not only Alph's.** The game finds a leader's sounds by counting along a
+family of them from its first, and a few families were only ever given sounds for the Pikmin. A
+leader's place in one of those falls past its end, on whatever comes next in the archive, and for
+Louie fretting that is four recordings of Alph searching. Those four are left alone, so that
+Louie's fretting is too. So are the cutscenes, where it is still Alph's own model on screen. Of
+the 96 recordings the archive names for Alph, 34 are still his.
 
 ## What's in here
 

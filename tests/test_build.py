@@ -6,6 +6,7 @@ These need both games (see `conftest.py`) and are skipped without them.
 
 import itertools
 import math
+import re
 import struct
 
 import pytest
@@ -31,6 +32,36 @@ WRITTEN = {
 }
 NEAR = 0.02  # how far, in the game's units, a part may be from where his animation puts it
 JOIN = 2.0  # how far apart, in degrees, two of his animations may be where one follows the other
+# Alph's sounds that another leader's place falls on as well, in a family of sounds made for something
+# only a Pikmin does (climbing a stalk, throwing what it carries): the record, and whose place it is.
+SHARED = {
+    **{f"WSD_PlayerAVo_Drop{n}": {("Pikmin/hnoboru_branch/ClimbingTree/11", "D")} for n in ("", "2", "3")},
+    "WSD_PikminVo_FallIntoHellPlayerA3": {("Pikmin/SysNameCall/VoThrowObj", "E")},
+}
+UNPLAYED = {"WSD_PlayerAVo_Change_Multi"}  # a second copy of a recording, which no record of the table plays
+# Every recording the archive names for Alph that is left his: the cutscenes'; the search of a leader left
+# standing, which Louie and Olimar make too; the punch grunt; an alarm; and those that are silent or unplayed.
+LEFT = {
+    "WSD_Demo_PlayerAVoRocketOut",
+    "WSD_Demo_PlayerAVoRocketOutSad",
+    "WSD_Demo_BossDApper_PlayerVo_SuprisePlayerA",
+    "WSD_Demo_a00_PlayerAVoice1",
+    "WSD_Demo_a00_PlayerAVoice2",
+    "WSD_Demo_a01_PlayerASuprise",
+    "WSD_Demo_a06_PlayerAVoice1",
+    "WSD_Demo_a10_0_PlayerAVoice1",
+    "WSD_Demo_a10_0_PlayerAVoice2",
+    *(f"WSD_PlayerAVo_LookFor{n}" for n in ("", "2", "3", "4")),
+    "WSD_PikminVo_AttackPlayerA",
+    "WSD_PikminVo_AttackPlayerA2",
+    "WSD_Pikmin_DownAlertPlayerA",
+    "WSD_Pikmin_HitPinkDummyPlayerA",
+    *(f"WSD_PikminVo_MogakiPlayerA{n}" for n in ("", "2", "3", "4")),
+    "WSD_PikminVo_RunAwayPlayerA",
+    *(f"WSD_PlayerAVo_HelpMe{n}" for n in ("JumpB1", "JumpB12", "B1", "B12", "B2", "B22")),
+    *(f"WSD_PlayerAVo_Yoreyore{n}" for n in ("BeforeDead", "BeforeDead2", "AfterDead", "AfterDead2", "LieDown")),
+    "WSD_PlayerAVo_YoreyoreLieDown2",
+}
 
 
 def inside(files: RomFs, archive: str, name: str) -> bytes:
@@ -326,14 +357,22 @@ def wave_of(archive: bfsar.Archive, group: bfsar.Group, sound: int) -> dict:
     return bfsar.read_wave(group.d, offset)
 
 
-def test_nothing_the_game_had_is_changed(romfs: RomFs, mod: RomFs):
-    """Every stock sound, file and wave archive entry is still there, as it was."""
+def alphs_own(romfs: RomFs) -> dict[str, int]:
+    """The game's sounds that are given to him: the archive's name for each, and its number."""
+    named = bfsar.labels(romfs.read(voice.ARCHIVE))
+    names = [name.format(voice.LEADER) for _, sounds in voice.OWN for name, _ in sounds]
+    return {name: voice.stock_sound(named, name) for name in names}
+
+
+def test_nothing_else_the_game_had_is_changed(romfs: RomFs, mod: RomFs):
+    """Every stock sound, file and wave archive entry is still there, as it was, but for Alph's own voice."""
     old, new = bfsar.Archive(romfs.read(voice.ARCHIVE)), bfsar.Archive(mod.read(voice.ARCHIVE))
+    his = set(alphs_own(romfs).values())
     for table in (bfsar.SOUNDS, bfsar.FILES, bfsar.WAVE_ARCHIVES):
         assert new.count(table) > old.count(table)
         for i in range(old.count(table)):
             was = old.raw(table, i)
-            assert new.raw(table, i)[: len(was)] == was
+            assert (new.raw(table, i)[: len(was)] == was) != (table == bfsar.SOUNDS and i in his)
     before, after = bfsar.Group(romfs.read(voice.GROUP)), bfsar.Group(mod.read(voice.GROUP))
     assert after.items[: len(before.items)] == before.items
     assert len(after.items) == len(before.items) + 2
@@ -374,6 +413,85 @@ def test_he_speaks_and_nobody_else_does(rom: Rom, romfs: RomFs, mod: RomFs):
                 for sound, _ in chosen:
                     assert archive.sound(sound)["volume"] == 0
                     assert not any(wave_of(archive, group, sound)["samples"])
+
+
+def records(table: bytes) -> list[tuple[str, int]]:
+    """Every record of the sound table that plays a sound: its name, and the sound's number."""
+    found = []
+    for record in table.split(b"\t# (OBJ)")[1:]:
+        name = re.search(rb'# command name\r\n\t\t\t"([^"]*)"', record)
+        sound = re.search(rb"# sound id\r\n\t\t\t(0x[0-9a-fA-F]+)", record)
+        if name and sound and int(sound.group(1), 16) >> 24 == 1:
+            found.append((name.group(1).decode(), int(sound.group(1), 16) & 0xFFFFFF))
+    return found
+
+
+def brought_to(archive: bfsar.Archive, table: bytes, sound: int) -> set[tuple[str, str | None]]:
+    """Every way the sound table has of playing a sound: (the record, who makes it, or None if anyone may)."""
+    found = set()
+    for name, base in records(table):
+        if not base <= sound < base + 16 * 7 or base >= archive.count(bfsar.SOUNDS):
+            continue
+        head = archive.sound(base)["user"]
+        kind = bfsar.user_field(head, "kind")
+        if kind == 0:
+            if any(played == sound for played, _ in voice.picks(archive, base, 0)):
+                found.add((name, None))
+        elif kind in bfsar.TYPE_SLOTS:
+            for who, slot in bfsar.TYPE_SLOTS[kind].items():
+                if any(played == sound for played, _ in voice.picks(archive, base, slot)):
+                    found.add((name, who))
+        else:  # a family that chooses its run some other way: it must not be able to come this far
+            assert sound >= base + 16 * max(1, bfsar.user_field(head, "variants"))
+    return found
+
+
+def test_alphs_voice_is_his_now(rom: Rom, romfs: RomFs, mod: RomFs):
+    """Each of Alph's own sounds plays the recording of his meant for it, and is played as it always was."""
+    old, new = bfsar.Archive(romfs.read(voice.ARCHIVE)), bfsar.Archive(mod.read(voice.ARCHIVE))
+    group = bfsar.Group(mod.read(voice.GROUP))
+    own = voice.own_voice(Voice(rom))
+    numbers = alphs_own(romfs)
+    assert len(numbers) == len(own) == 62
+    new_file = new.count(bfsar.FILES) - 1  # the wave sounds added to the group: the last file of the archive
+    for name, take in own:
+        sound = numbers[name]
+        was, now = old.sound(sound), new.sound(sound)
+        wave = wave_of(new, group, sound)
+        assert (wave["samples"], wave["rate"]) == (list(take.samples), take.rate)
+        assert now["file"] == new_file
+        assert [now[key] for key in ("kind", "volume", "player", "priority")] == [
+            was[key] for key in ("kind", "volume", "player", "priority")
+        ]
+        # Only three things of the entry differ: its file, the wave in it, and the two numbers the game keeps
+        # in a sound, where the random changes of loudness and pitch are taken off and the rest is as it was.
+        before, after = old.raw(bfsar.SOUNDS, sound), new.raw(bfsar.SOUNDS, sound)
+        differ = {i for i in range(len(before)) if before[i] != after[i]}
+        assert differ <= {*range(4), *range(0x2C, 0x34), *range(0x48, 0x4C)}
+        user = bfsar.with_fields(was["user"], volume_spread=0, pitch_spread=0)
+        assert now["user"] == user
+    # The loudest and the quietest of them are as far apart as the game has them: a cry of pain, a yawn.
+    volumes = [old.sound(sound)["volume"] for sound in numbers.values()]
+    assert max(volumes) > 4 * min(volumes) > 0
+
+
+def test_nobody_else_speaks_with_his_voice(romfs: RomFs, mod: RomFs):
+    """The sound table brings only the leader with Alph's model to his sounds, and what is left Alph's is this list."""
+    stock = romfs.read(voice.ARCHIVE)
+    old = bfsar.Archive(stock)
+    table = inside(mod, voice.COMMANDS, voice.TABLE)
+    numbers = alphs_own(romfs)
+    for name, sound in numbers.items():
+        ways = brought_to(old, table, sound)
+        others = {(record, who) for record, who in ways if who not in {None, voice.LEADER}}
+        assert others == SHARED.get(name, set())
+        assert bool(ways) != (name in UNPLAYED)
+    recordings = {
+        name
+        for name, item in bfsar.labels(stock).items()
+        if item >> 24 == 1 and "PlayerA" in name and old.sound(item & 0xFFFFFF)["kind"] == bfsar.WAVE_SOUND
+    }
+    assert recordings - set(numbers) == LEFT
 
 
 # -- the pictures ----------------------------------------------------------------------------------

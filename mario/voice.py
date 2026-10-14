@@ -1,10 +1,11 @@
 """
-Mario's voice: what he says when he throws a Pikmin, punches, kicks, jumps and lands, and as he
-falls asleep when he is left standing.
+Mario's voice: what he says when he throws a Pikmin, punches, kicks, jumps and lands, as he falls
+asleep when he is left standing, and wherever the game has Alph speak.
 
 What is written
 ---------------
-* `audio/audiores/CarrotAudio.bfsar`: the game's sound archive, with entries for his sounds.
+* `audio/audiores/CarrotAudio.bfsar`: the game's sound archive, with entries for his sounds, and
+  Alph's own voice sent to them.
 * `audio/audiores/GROUP_STATIC.bfgrp`: the one file all the game's sounds are loaded from, with his
   on the end.
 * `command/command_table.szs`: the table that ties sounds to frames of animation clips.
@@ -22,9 +23,16 @@ How, all of it data the game already reads
   several, and the game's own spacing rule keeps the throw from speaking on every Pikmin of a fast
   volley.
 * **What.** The sounds themselves are new: a wave archive and a wave sound file added to the end of
-  the group file, and entries for them added to the sound archive. No stock sound is touched.
+  the group file, and entries for them added to the sound archive. None of that touches a stock
+  sound.
 * **How loud.** As loud as the leaders' punch grunt, which is a shout. What he says while he falls
   asleep, left standing, is as quiet as what the leaders themselves say then.
+* **In place of Alph's.** The rest of a leader's voice has no clip of his own to hang a record on:
+  the game plays it by name from its code, or from records on clips the Pikmin share, and Alph's
+  run of each family is recordings of Alph. Those sounds are the one thing of the game's own that
+  is changed here: each is sent to one of Mario's recordings (`OWN`), and keeps everything else
+  about how it is played, its loudness included. Only recordings of Alph are changed, and none
+  that another leader is heard to make, so nobody else's voice is.
 """
 
 from __future__ import annotations
@@ -87,6 +95,168 @@ IDLE = (
     ("m_yawn", 0, "yawning", "WSD_Player{}Vo_FreeAkubi"),
     ("m_sit", 66, "snoring1", None),
     ("m_sit", 84, "snoring2", None),
+)
+# The rest of the leader's voice. The game plays most of what a leader says by name from its code,
+# or from a record of its own on a clip the leaders share with the Pikmin, and each of those ends at
+# a sound of the archive that is a recording of Alph. Each of these is made to play a recording of
+# Mario's instead: (when it is heard, ((the archive's name for the sound, his sound), ...)).
+#
+# Which of his: what he says in his own game for the nearest thing. "Okey-dokey" where he is
+# chosen; "whoa" where he is startled; his cry when something hits him, "oof", "mamma mia" for a
+# blast and "d'oh" when he is squashed; his three cries from a triple jump when he is thrown; small
+# grunts where the leaders make small noises; "yah", "wah" and "hoo", his jump's three, wherever a
+# leader says something as he jumps or dodges; "here we go", his cry from a cannon, down a slide
+# and up a geyser; "hello" as he waves; his long falling cry into a pit; and his yawn.
+#
+# Left as they are, of the recordings the archive names for Alph:
+#   * the cutscenes', which play beside a model of Alph that this mod does not replace;
+#   * the search of a leader left standing (`WSD_PlayerAVo_LookFor`), which is not his alone: the
+#     Pikmin's fretting is a family with no runs for the leaders, and Louie's and Olimar's places in
+#     it fall on these (see `bfsar.TYPE_SLOTS`). Changing them would change how those two fret;
+#   * the punch grunt, which he no longer makes: his punches and kick have a voice of their own;
+#   * the ones that are silent in the game's own files, and the ones nothing plays for him.
+# Four of those below can be reached the same way by another leader, through families made for
+# things only a Pikmin does (climbing a stalk, throwing what it carries), and are changed all the
+# same: the three of the clip `drop`, and the third of the pit.
+OWN = (
+    # (the second is the same recording again, which no record of the sound table plays)
+    (
+        "when the player changes to him",
+        (("WSD_Player{}Vo_Change", "okey_dokey"), ("WSD_Player{}Vo_Change_Multi", "okey_dokey")),
+    ),
+    ("as he notices something and joins a party", (("WSD_PikminVo_JoinPartyPlayer{}", "whoa"),)),
+    (
+        "when he is hit, caught by a blast or squashed",
+        (
+            ("WSD_PikminVo_DamagePlayer{}", "attacked"),
+            ("WSD_PikminVo_DamagePlayer{}2", "ooof"),
+            ("WSD_PikminVo_BombDamagePlayer{}", "mama_mia"),
+            ("WSD_PikminVo_BombDamagePlayer{}2", "ooof"),
+            ("WSD_Player{}Vo_Squash", "doh"),
+            ("WSD_Player{}Vo_Squash2", "ooof"),
+            ("WSD_Player{}Vo_Squash3", "attacked"),
+        ),
+    ),
+    (
+        "when another leader throws him",
+        (
+            ("WSD_PikminVo_ThrownPlayer{}", "yahoo"),
+            ("WSD_PikminVo_ThrownPlayer{}2", "waha"),
+            ("WSD_PikminVo_ThrownPlayer{}3", "yippee"),
+        ),
+    ),
+    (
+        "when he is dismissed from a party",
+        (
+            ("WSD_PikminVo_BeFreePlayer{}", "uh2"),
+            ("WSD_PikminVo_BeFreePlayer{}2", "hrmm"),
+            ("WSD_PikminVo_BeFreePlayer{}3", "uh"),
+        ),
+    ),
+    # (the leader being played makes the dodge's own sounds and says nothing)
+    (
+        "when a party he is in dodges",
+        (
+            ("WSD_PikminVo_StepOutPlayer{}", "jump_hoo"),
+            ("WSD_PikminVo_StepOut2Player{}", "jump_yah"),
+            ("WSD_PikminVo_StepOut3Player{}", "jump_wah"),
+        ),
+    ),
+    (
+        "as he sets off down a slide",
+        (
+            ("WSD_Player{}Vo_SliderStart", "here_we_go"),
+            ("WSD_Player{}Vo_SliderStart2", "yippee"),
+            ("WSD_Player{}Vo_SliderStart3", "waha"),
+        ),
+    ),
+    (
+        "on a trampoline, and carried up by a geyser",
+        (
+            ("WSD_Player{}Vo_Trampoline", "hoohoo"),
+            ("WSD_Player{}Vo_Trampoline2", "yahoo"),
+            ("WSD_Player{}Vo_RideOnGeyser", "here_we_go"),
+            ("WSD_Player{}Vo_RideOnGeyser2", "waha"),
+        ),
+    ),
+    (
+        "as he jumps: the clips `drop_lotus`, `jump` and `drop`",
+        (
+            ("WSD_PikminVo_JumpToIndianLotusPlayer{}", "jump_yah"),
+            ("WSD_PikminVo_JumpToIndianLotusPlayer{}2", "jump_wah"),
+            ("WSD_PikminVo_JumpToIndianLotusPlayer{}3", "jump_hoo"),
+            ("WSD_PikminVo_JumpPlayer{}1", "jump_yah"),
+            ("WSD_PikminVo_JumpPlayer{}2", "jump_wah"),
+            ("WSD_PikminVo_JumpPlayer{}3", "jump_hoo"),
+            ("WSD_Player{}Vo_Drop", "jump_yah"),
+            ("WSD_Player{}Vo_Drop2", "jump_wah"),
+            ("WSD_Player{}Vo_Drop3", "jump_hoo"),
+        ),
+    ),
+    (
+        "when he jumps for joy, and with the ultra-spicy spray",
+        (
+            ("WSD_PikminVo_GladJumpPlayer{}", "haha"),
+            ("WSD_PikminVo_GladJumpPlayer{}2", "yippee"),
+            ("WSD_PikminVo_GekikaraJumpPlayer{}", "yahoo"),
+        ),
+    ),
+    (
+        "as he waves",
+        (
+            ("WSD_PikminVo_WaveOnesHandPlayer{}", "hello"),
+            ("WSD_PikminVo_WaveOnesHandPlayer{}2", "hello"),
+            ("WSD_PikminVo_WaveOnesHandPlayer{}3", "hello"),
+        ),
+    ),
+    (
+        "as he pumps his fist",
+        (
+            ("WSD_Player{}Vo_Gattsu", "jump_hoo"),
+            ("WSD_Player{}Vo_Gattsu2", "jump_yah"),
+            ("WSD_Player{}Vo_Gattsu3", "jump_wah"),
+        ),
+    ),
+    (
+        "as he falls into a pit",
+        (
+            ("WSD_PikminVo_FallIntoHellPlayer{}", "waaaooow"),
+            ("WSD_PikminVo_FallIntoHellPlayer{}2", "waaaooow"),
+            ("WSD_PikminVo_FallIntoHellPlayer{}3", "waaaooow"),
+        ),
+    ),
+    (
+        "caught in a net",
+        (("WSD_Player{}Vo_Net", "mama_mia"), ("WSD_Player{}Vo_Net2", "whoa"), ("WSD_Player{}Vo_Net3", "uh")),
+    ),
+    # (the second is spelled so in the game's archive)
+    (
+        "knocked back, and as a bubble he is caught in bursts",
+        (
+            ("WSD_PikminVo_ReboundPlayer{}", "uh"),
+            ("WSD_PikminrVo_ReboundPlaye{}2", "ooof"),
+            ("WSD_PikminVo_ReboundPlayer{}3", "uh2"),
+            ("WSD_PikminVo_BubbleBreakPlayer{}", "whoa"),
+            ("WSD_PikminVo_BubbleBreakPlayer{}2", "uh"),
+        ),
+    ),
+    (
+        "as he gets up after being knocked down",
+        (
+            ("WSD_PikminVo_GetUpFromElectricShockPlayer{}", "hrmm"),
+            ("WSD_PikminVo_GetUpFromElectricShockPlayer{}2", "uh2"),
+            ("WSD_PikminVo_GetUpFromElectricShockPlayer{}3", "uh"),
+        ),
+    ),
+    # (the first of the game's three for this is silent, and the one it picks most often: left as it is)
+    (
+        "running about in a panic",
+        (("WSD_PikminVo_RunAwayPlayer{}2", "mama_mia"), ("WSD_PikminVo_RunAwayPlayer{}3", "whoa")),
+    ),
+    (
+        "with the leaders' own yawn, should anything still have him play it",
+        (("WSD_Player{}Vo_FreeAkubi", "yawning"), ("WSD_Player{}Vo_FreeAkubi2", "yawning")),
+    ),
 )
 # The jumps' sounds are five seconds in all, and every sound of the game's is loaded into one pool
 # of memory at start-up whose spare room is not known. They, and everything added since, are kept
@@ -196,6 +366,23 @@ def kept(voice: Voice, name: str, weight: int = 1) -> Take:
     return Take(name, weight, halve(samples), JUMP_RATE)
 
 
+def own_voice(voice: Voice) -> list[tuple[str, Take]]:
+    """
+    What he says in place of the leader's own voice (`OWN`), rendered from the ROM.
+
+    Returns:
+        The archive's name for each of the game's sounds, and the take it is to play.
+    """
+    made: dict[str, Take] = {}
+    out = []
+    for _, sounds in OWN:
+        for name, said in sounds:
+            if said not in made:
+                made[said] = kept(voice, said)
+            out.append((name.format(LEADER), made[said]))
+    return out
+
+
 def picks(archive: bfsar.Archive, sound: int, slot: int) -> list[tuple[int, int]]:
     """
     What the game may play for a record naming `sound`, made by an actor in run `slot`.
@@ -262,9 +449,19 @@ def _set_field(record: bytes, field: bytes, value: bytes, old: bytes = rb"\d+") 
     return re.sub(rb"(# " + field + rb"\r\n\t\t\t)" + old, lambda match: match.group(1) + value, record, count=1)
 
 
-def add_voice(archive: bytes, group: bytes, table: bytes, said: list[Line]) -> tuple[bytes, bytes, bytes]:
+def add_voice(
+    archive: bytes,
+    group: bytes,
+    table: bytes,
+    said: list[Line],
+    own: list[tuple[str, Take]] | None = None,
+) -> tuple[bytes, bytes, bytes]:
     """
     Add his voice to the game's three files: a family of sounds and a record for each line.
+
+    `own` is the game's own sounds that are to play a take of his instead, by the names the
+    archive gives them. Such a sound keeps its place and everything that says how it is played
+    (how loud, on which player, how it is picked among its fellows); only the recording changes.
 
     Returns:
         The new sound archive, group file and sound table.
@@ -274,6 +471,7 @@ def add_voice(archive: bytes, group: bytes, table: bytes, said: list[Line]) -> t
     """
     arc, grp = bfsar.Archive(archive), bfsar.Group(group)
     count, record, top_key, names = table_parts(table)
+    own = own or []
     if not said or len({line.name for line in said}) != len(said):
         raise BuildError("each line needs a clip and frame of its own")
 
@@ -301,6 +499,11 @@ def add_voice(archive: bytes, group: bytes, table: bytes, said: list[Line]) -> t
                 order.append(take.name)
             elif made[take.name] != (list(take.samples), take.rate):
                 raise BuildError(f"two different sounds are both called {take.name}")
+    for _, take in own:
+        if made.setdefault(take.name, (list(take.samples), take.rate)) != (list(take.samples), take.rate):
+            raise BuildError(f"two different sounds are both called {take.name}")
+        if take.name not in order:
+            order.append(take.name)
     waves = [bfsar.make_wave(*made[name]) for name in order]
     waves.append(bfsar.make_wave([0] * SILENCE, SILENCE_RATE))
     silence = len(order)
@@ -362,6 +565,28 @@ def add_voice(archive: bytes, group: bytes, table: bytes, said: list[Line]) -> t
         },
     )
 
+    # The game's own sounds that are to play his: each one's entry, where it now is, sent to the new
+    # file and the wave in it. The small changes of loudness and pitch the game makes at random to its
+    # own voice lines are taken off, as his other lines have none.
+    grown, patched, done = bfsar.Archive(new_archive), bytearray(new_archive), set()
+    for name, take in own:
+        index = stock_sound(named, name)
+        was = arc.sound(index)
+        if was["kind"] != bfsar.WAVE_SOUND or index in done:
+            raise BuildError(f"{name} is not a recording, or is asked for twice")
+        done.add(index)
+        at, size = grown.entry(bfsar.SOUNDS, index)
+        try:
+            patched[at : at + size] = bfsar.wave_sound_entry(
+                arc.raw(bfsar.SOUNDS, index),
+                file=files + 1,
+                index=order.index(take.name),
+                user=bfsar.with_fields(was["user"], volume_spread=0, pitch_spread=0),
+            )
+        except ValueError as error:
+            raise BuildError(f"{name}: {error}") from error
+    new_archive = bytes(patched)
+
     # The new records of the table: the pattern's, each for another clip and frame and its own family.
     tag = re.search(rb'# anim tag\r\n\t\t\t"([^"]*)"', record).group(1)
     new_table = table[:-3].replace(
@@ -391,6 +616,8 @@ def add_voice(archive: bytes, group: bytes, table: bytes, said: list[Line]) -> t
         sounds,
         sounds + len(entries) - 1,
     )
+    if own:
+        logger.info("  %d of the leader's own sounds play his in place of theirs", len(own))
     return new_archive, new_group, new_table
 
 
@@ -399,7 +626,8 @@ def build(rom: Rom, romfs: RomFs, mod: Mod) -> None:
     logger.info("voice:")
     archive, group, commands = romfs.read(ARCHIVE), romfs.read(GROUP), romfs.read(COMMANDS)
     table = sarc.Sarc(yaz0.decompress(commands)).files()[TABLE]
-    new_archive, new_group, new_table = add_voice(archive, group, table, lines(Voice(rom)))
+    voice = Voice(rom)
+    new_archive, new_group, new_table = add_voice(archive, group, table, lines(voice), own_voice(voice))
     mod.write(ARCHIVE, new_archive)
     mod.write(GROUP, new_group)
     mod.write(COMMANDS, repack(commands, {TABLE: new_table}))
