@@ -4,6 +4,8 @@ The built mod, read back the way the game will read it.
 These need both games (see `conftest.py`) and are skipped without them.
 """
 
+import itertools
+import math
 import struct
 
 import pytest
@@ -28,6 +30,7 @@ WRITTEN = {
     *(f"lyt/{name}.szs" for name in ("vsselect", "worldranking")),
 }
 NEAR = 0.02  # how far, in the game's units, a part may be from where his animation puts it
+JOIN = 2.0  # how far apart, in degrees, two of his animations may be where one follows the other
 
 
 def inside(files: RomFs, archive: str, name: str) -> bytes:
@@ -187,6 +190,43 @@ def test_his_moves_play_back(stock: Bfres, built: Bfres, char: model.Character):
                 assert sum(rotation[r][0] ** 2 for r in range(3)) ** 0.5 == pytest.approx(size, abs=1e-4)
 
 
+def apart(char: model.Character, one: list, other: list) -> float:
+    """How far apart two poses of his are: the angle, in degrees, at the part that is turned furthest."""
+    worst = 0.0
+    for part, (a, _), (b, _) in zip(char.mario.parts, one, other, strict=True):
+        if part.tris:
+            trace = sum(a[r][c] * b[r][c] for r in range(3) for c in range(3))
+            worst = max(worst, math.degrees(math.acos(max(-1.0, min(1.0, (trace - 1.0) / 2.0)))))
+    return worst
+
+
+def test_his_falling_asleep_joins_up(char: model.Character):
+    """Left standing, each piece of a clip ends where the next begins, and a clip begins and ends where it must."""
+    mario = char.mario
+
+    def pose(which: str, frame: int) -> list:
+        animation = mario.animation(which)
+        return mario.pose(animation.rotations(float(frame)), animation.root(float(frame)))
+
+    stand = pose(model.STANDS["m_wait"].pieces[0], 0)
+    poses = {name: model.move_poses(mario, model.MOVES[name]) for name in moves.IDLES}
+    for name in moves.IDLES:
+        move = model.MOVES[name]
+        # A piece that begins on its frame 1 is led into by its frame 0, which is where the piece before must end.
+        for before, after in itertools.pairwise(move.pieces):
+            led_into = pose(after.animation, max(after.first - 1, 0))
+            assert apart(char, pose(before.animation, before.last), led_into) < JOIN
+        if move.loop:  # where it goes round, it comes back to the very frame it left
+            assert poses[name][move.loop[0]] == poses[name][move.loop[1]]
+    # His yawn, his scratch and his sitting down begin in his stand, and all four end in it: he wakes onto his feet.
+    for name in ("m_yawn", "m_scratch", "m_sit"):
+        assert apart(char, poses[name][0], stand) < JOIN
+    for name in moves.IDLES:
+        assert apart(char, poses[name][-1], stand) < JOIN
+    # He lies down from where he sits asleep.
+    assert apart(char, poses["m_nap"][0], poses["m_sit"][model.MOVES["m_sit"].loop[0]]) < JOIN
+
+
 def test_his_standing_still_plays_back(stock: Bfres, built: Bfres, char: model.Character, romfs: RomFs):
     """His standing clip is the leaders' stand, round and round, for their bones, and his own for his."""
     clip_list = inside(romfs, model.SETTINGS, model.CLIP_LIST)
@@ -309,6 +349,14 @@ def test_he_speaks_and_nobody_else_does(rom: Rom, romfs: RomFs, mod: RomFs):
     assert names[-len(said) :] == [line.name.encode() for line in said]
     records = table.split(b"\t# (OBJ)")[-len(said) :]
     slots = bfsar.TYPE_SLOTS[voice.KIND]
+    # How loud: as the leaders' punch grunt, but for what he says left standing, which is as quiet as theirs.
+    stock = romfs.read(voice.ARCHIVE)
+    theirs, named = bfsar.Archive(stock), bfsar.labels(stock)
+    pattern = int(voice.table_parts(old_table)[1].split(b"# sound id\r\n\t\t\t")[1].split()[0], 16) & 0xFFFFFF
+    grunt = theirs.sound(voice.picks(theirs, pattern, slots[voice.LEADER])[0][0])["volume"]
+    quiet = {line.like: theirs.sound(voice.stock_sound(named, line.like))["volume"] for line in said if line.like}
+    assert quiet
+    assert all(0 < volume < grunt for volume in quiet.values())
     for line, record in zip(said, records, strict=True):
         assert b'# anim tag\r\n\t\t\t"' + line.clip.encode() + b'"' in record
         assert b"# frame\r\n\t\t\t%d" % line.frame in record
@@ -321,6 +369,7 @@ def test_he_speaks_and_nobody_else_does(rom: Rom, romfs: RomFs, mod: RomFs):
                     wave = wave_of(archive, group, sound)
                     assert (wave["samples"], wave["rate"]) == (list(take.samples), take.rate)
                     assert weight == (take.weight if len(line.takes) > 1 else 16)
+                    assert archive.sound(sound)["volume"] == quiet.get(line.like, grunt)
             else:
                 for sound, _ in chosen:
                     assert archive.sound(sound)["volume"] == 0

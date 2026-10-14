@@ -4,8 +4,8 @@ Alph becomes Mario: the model, his animations, and the game's list of clips.
 What is written
 ---------------
 * `player/pikminAll.szs`: the one model file every leader and Pikmin lives in, with Alph's model
-  rebuilt as Mario and twelve clips of his own added.
-* `player/pikminAll_indirect.szs`: the game's list of animation clips, with his eleven moves on the
+  rebuilt as Mario and sixteen clips of his own added.
+* `player/pikminAll_indirect.szs`: the game's list of animation clips, with his fifteen moves on the
   end and the leaders' standing entry pointed at his own standing clip.
 * `effect/effect_common.szs`: the effects, with the light of Alph's antenna put out.
 
@@ -24,9 +24,10 @@ How
   frame, where Mario's own animation puts that part, in the space of the leader bone above it. The
   leader's bones still do the leaders' walk underneath; his cancel it and replace it. Other leaders
   and the Pikmin have no bones by those names, so the same clips play on them unchanged.
-* **Moves.** His punches, kick, jumps and landings, and his fall, are new clips, laid end to end
-  from pieces of his animations. A clip is played by its number in the game's list, so the list
-  gains an entry for each; `moves.py` is the code that plays them.
+* **Moves.** His punches, kick, jumps and landings, his fall, and what he does when he is left
+  standing, are new clips, laid end to end from pieces of his animations. A clip is played by its
+  number in the game's list, so the list gains an entry for each; `moves.py` is the code that plays
+  them.
 * **Standing still.** His own is three animations long and the leaders' standing clip is 20
   frames, shared with every Pikmin, so his cannot ride inside it as his walk rides inside theirs.
   He gets a clip of his own, and the entry of the game's list that a leader stands with is pointed
@@ -58,6 +59,7 @@ from mario.formats.bfres import Bfres, Model, Shape, SkelAnim, Skeleton
 from mario.geometry import (
     Matrix,
     Vector,
+    between,
     cross,
     dot,
     euler_matrix,
@@ -140,7 +142,11 @@ class Move:
         more: The frame from which another press of the button is taken, if one is.
         swell: The part that swells, the count his game sets for it, and the frame it is set on.
         spark: The part the spark of a hit belongs on, and the frame of the clip to find it at. A
-            punch or kick has it on the part that swells, on the frame it lands.
+            punch or kick has it on the part that swells, on the frame it lands. A move with
+            neither lands on nothing, and has no spark.
+        from_stand: How many of its first frames are eased in from the first frame of his stand.
+        to_stand: How many of its last frames are eased back into that frame.
+        loop: The two frames it goes round between until the game tells it to finish, if it does.
     """
 
     pieces: tuple[Piece, ...]
@@ -148,6 +154,9 @@ class Move:
     more: int | None = None
     swell: tuple[str, int, int] | None = None
     spark: tuple[str, int] | None = None
+    from_stand: int = 0
+    to_stand: int = 0
+    loop: tuple[int, int] | None = None
 
 
 # What his own game does in code is restated here.
@@ -164,6 +173,17 @@ class Move:
 #   * Falling is one pose, held until he lands: here for a second, after which the game holds a
 #     clip's last frame itself. The landing from it begins at frame 9 of its data, whose first frame
 #     is that pose.
+#   * Left alone he falls asleep, and that is one animation after another, each ending where the
+#     next begins: he droops, scratches, yawns, sits down, sleeps sitting, lies down and sleeps
+#     lying; and from either sleep he wakes with a start and is on his feet. The game gives a
+#     leader nobody is playing, again and again, either a clip to play once or a rest in which he
+#     sits down, from which it may lay him down to sleep. So the yawn, and the drooping and
+#     scratching, are the two clips he plays once, in turn; since nothing follows them here as it
+#     does in his own game, each is eased from his stand and back into it. Sitting and lying are
+#     laid out as the leaders' own sitting clip is: the game plays to the second of two markers
+#     and goes back to the first until it tells the clip to finish, then plays on to the end. For
+#     him that end is his waking, so the frame on the second marker is the first frame of his
+#     sleep again, which is also where his waking starts.
 # The order is the order the code counts on: `moves.CLIPS`.
 MOVES = {
     "m_punch1": Move(
@@ -190,6 +210,27 @@ MOVES = {
     "m_land3": Move(pieces=(Piece("triple_jump_land", 0, 31),), spark=("right_foot", 0)),
     "m_fall": Move(pieces=(Piece("general_fall", 0, 0, held=29),), spark=("right_foot", 0)),
     "m_fland": Move(pieces=(Piece("general_land", 9, 23),), spark=("right_foot", 0)),
+    "m_yawn": Move(pieces=(Piece("start_sleep_yawn", 0, 58),), from_stand=8, to_stand=8),
+    "m_scratch": Move(pieces=(Piece("start_sleep_idle", 0, 49), Piece("start_sleep_scratch", 0, 66)), to_stand=8),
+    "m_sit": Move(
+        pieces=(
+            Piece("start_sleep_sitting", 0, 63),
+            Piece("sleep_idle", 0, 39),
+            Piece("sleep_idle", 0, 0),
+            Piece("wake_from_sleep", 1, 19),
+        ),
+        from_stand=8,
+        loop=(64, 104),
+    ),
+    "m_nap": Move(
+        pieces=(
+            Piece("sleep_start_lying", 0, 39),
+            Piece("sleep_lying", 0, 49),
+            Piece("sleep_lying", 0, 0),
+            Piece("wake_from_lying", 1, 20),
+        ),
+        loop=(40, 90),
+    ),
 }
 MOVE_MODEL = "punch"  # the stock clip a new one takes its header from: played once, not looped
 # The leaders' punch draws its spark 4 units along the right arm's bone. In a move that bone has
@@ -467,7 +508,8 @@ def define_moves(clip_list: bytes, moves: dict[str, Move]) -> tuple[bytes, int]:
     A clip is played by its place in this list. Entries are only ever added at the end, so every
     number the game's own code plays a clip by still means what it did. Each move's tag is its
     clip's name, with a marker on the frame it lands and, if another move may follow it, one on the
-    frame from which the next press is taken.
+    frame from which the next press is taken; a move that goes round has the two markers the
+    game's own looping entries have.
 
     Returns:
         The new list, and the number of the first move in it.
@@ -484,9 +526,10 @@ def define_moves(clip_list: bytes, moves: dict[str, Move]) -> tuple[bytes, int]:
     first = int(counts[0])
     added = ""
     for name, move in moves.items():
-        marks = sorted(
-            (float(frame), flag) for frame, flag in ((move.hit, ACTION), (move.more, MORE)) if frame is not None
-        )
+        marks = [(move.hit, ACTION), (move.more, MORE)]
+        if move.loop:
+            marks += [(move.loop[0], LOOP_START), (move.loop[1], LOOP_END)]
+        marks = sorted((float(frame), flag) for frame, flag in marks if frame is not None)
         added += f'\r\n\t# \r\n\t{{\r\n\t\t"{name}" \r\n\t\t"{name}" \r\n\t\t{len(marks)} '
         for frame, flag in marks:
             added += f'\r\n\t\t{frame:.8f} {flag} "" '
@@ -664,9 +707,53 @@ def move_steps(move: Move) -> list[tuple[str, int]]:
     return steps
 
 
-def move_spark(move: Move) -> tuple[str, int]:
-    """The part the spark of the move's hit belongs on, and the frame of the clip to find it at."""
-    return move.spark or (move.swell[0], move.hit)
+def move_poses(mario: Mario, move: Move) -> list[list[Frame]]:
+    """
+    His pose on each frame of a move.
+
+    A move's eased frames go the short way round between the first frame of his stand and what its
+    pieces say, a share of the way for each frame.
+
+    Returns:
+        Where every part of his is, frame by frame.
+
+    Raises:
+        BuildError: If the move is too short to ease into and out of.
+    """
+    steps = move_steps(move)
+    if not move.from_stand and not move.to_stand:
+        return [
+            mario.pose(mario.animation(which).rotations(float(frame)), mario.animation(which).root(float(frame)))
+            for which, frame in steps
+        ]
+    last = len(steps) - 1
+    if move.from_stand + move.to_stand >= last:
+        raise BuildError(f"a move of {len(steps)} frames is too short to ease into and out of")
+    stand = mario.animation(next(iter(STANDS.values())).pieces[0])
+    rest = {part: euler_matrix(*angles) for part, angles in stand.rotations(0.0).items()}
+    rest_root = stand.root(0.0)
+    poses = []
+    for k, (which, frame) in enumerate(steps):
+        animation = mario.animation(which)
+        turns = {part: euler_matrix(*angles) for part, angles in animation.rotations(float(frame)).items()}
+        root = animation.root(float(frame))
+        if k < move.from_stand:
+            share = k / float(move.from_stand)
+            turns = {part: between(rest[part], turns[part], share) for part in rest}
+            root = tuple(x + (y - x) * share for x, y in zip(rest_root, root, strict=True))
+        elif k > last - move.to_stand:
+            share = (k - (last - move.to_stand)) / float(move.to_stand)
+            turns = {part: between(turns[part], rest[part], share) for part in turns}
+            root = tuple(x + (y - x) * share for x, y in zip(root, rest_root, strict=True))
+        poses.append(mario.pose(turns, root))
+    return poses
+
+
+def move_spark(move: Move) -> tuple[str, int] | None:
+    """The part the spark of the move's hit belongs on, and the frame of the clip to find it at, if it has one."""
+    if move.spark:
+        return move.spark
+    return (move.swell[0], move.hit) if move.swell else None
 
 
 def move_swell(mario: Mario, move: Move, count: int) -> list[float]:
@@ -688,23 +775,24 @@ def move_targets(char: Character, move: Move, skel: Skeleton, plan: Plan) -> tup
     Returns:
         What the clip tells the leader's own bones (to rest, but for the bone the punch draws its
         spark on, which is moved so that the spark's point is the middle of the part that lands, on
-        the frame it lands), and the targets frame by frame.
+        the frame it lands; a move with no spark leaves that bone at rest too), and the targets
+        frame by frame.
     """
     mario = char.mario
     names = [p.name for p in mario.parts]
     bone = {b["name"]: i for i, b in enumerate(skel.bones)}
-    poses = [
-        mario.pose(mario.animation(which).rotations(float(frame)), mario.animation(which).root(float(frame)))
-        for which, frame in move_steps(move)
-    ]
-    part, at = move_spark(move)
-    corners = [p for _, name, tri in mario.triangles(poses[at]) if name == part for p, _, _ in tri]
-    point = char.place(tuple(sum(p[k] for p in corners) / len(corners) for k in range(3)))
-    rest = stock_world(skel, plan, {})
-    i = bone[HIT_BONE]
-    parent = skel.bones[i]["parent"]
-    origin = to_model(rest[i][0], point, (-HIT_REACH, 0.0, 0.0))
-    pose = {HIT_BONE: {"T": list(to_local(rest[parent][0], rest[parent][1], origin))}}
+    poses = move_poses(mario, move)
+    pose: Pose = {}
+    spark = move_spark(move)
+    if spark:
+        part, at = spark
+        corners = [p for _, name, tri in mario.triangles(poses[at]) if name == part for p, _, _ in tri]
+        point = char.place(tuple(sum(p[k] for p in corners) / len(corners) for k in range(3)))
+        rest = stock_world(skel, plan, {})
+        i = bone[HIT_BONE]
+        parent = skel.bones[i]["parent"]
+        origin = to_model(rest[i][0], point, (-HIT_REACH, 0.0, 0.0))
+        pose = {HIT_BONE: {"T": list(to_local(rest[parent][0], rest[parent][1], origin))}}
     stock = stock_world(skel, plan, pose)
     frames = []
     for p in poses:

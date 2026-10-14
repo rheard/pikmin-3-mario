@@ -57,6 +57,10 @@ ANIMATIONS = {
     "triple_jump": 193, "triple_jump_land": 192, "general_fall": 86, "general_land": 87,
     "backflip": 4, "ground_kick": 102,
     "first_punch": 103, "second_punch": 104, "first_punch_fast": 105, "second_punch_fast": 106,
+    # Left alone he falls asleep, in this order: he droops, scratches, yawns, sits down, sleeps sitting
+    # (a loop), lies down and sleeps lying (a loop); and he wakes from either with a start.
+    "start_sleep_idle": 129, "start_sleep_scratch": 130, "start_sleep_yawn": 131, "start_sleep_sitting": 132,
+    "sleep_idle": 133, "sleep_start_lying": 134, "sleep_lying": 135, "wake_from_sleep": 200, "wake_from_lying": 201,
 }  # fmt: skip
 
 # The parts, in the order the model's layout visits them, which is the order animations use.
@@ -635,7 +639,7 @@ class Mario:
 
     def pose(
         self,
-        rotations: dict[str, Vector] | None = None,
+        rotations: dict[str, Vector | Matrix] | None = None,
         root: Vector | None = None,
         lean: float = 0.0,
     ) -> Pose:
@@ -643,7 +647,9 @@ class Mario:
         [(rotation, position)] for every part in model space, before the model's own scale.
 
         `rotations` maps part names to angles in radians (parts left out are not turned); with
-        nothing given this is the rest pose. `lean` (radians) pitches everything above the pelvis
+        nothing given this is the rest pose. A part's turn may be given as a rotation matrix in
+        place of its three angles, which is how a pose part of the way between two of his is
+        handed over. `lean` (radians) pitches everything above the pelvis
         forward about it, which the game does in code while he walks or runs: up to 30 degrees,
         reached at full speed.
 
@@ -655,7 +661,8 @@ class Mario:
             root = REST_ROOT if root is None else root
         out = []
         for i, part in enumerate(self.parts):
-            turn = euler_matrix(*rotations.get(part.name, (0.0, 0.0, 0.0)))
+            turn = rotations.get(part.name, (0.0, 0.0, 0.0))
+            turn = turn if isinstance(turn[0], list) else euler_matrix(*turn)
             offset = part.offset if i else tuple(part.offset[k] + (root or (0, 0, 0))[k] for k in range(3))
             if part.parent is None:
                 out.append((turn, tuple(float(c) for c in offset)))

@@ -50,7 +50,9 @@ VOICE_CHANNEL = 2  # the sound-effect sequence's channel for Mario's voice
 # Sound numbers in the voice channel worth a name here: what he says, not when he says it.
 SOUNDS = {
     "jump_yah": 0x00, "jump_wah": 0x01, "jump_hoo": 0x02, "hoohoo": 0x03, "yahoo": 0x04, "wah2": 0x07,
+    "yawning": 0x0D, "snoring1": 0x0E, "snoring2": 0x0F,
     "haha": 0x11, "punch_yah": 0x1E, "punch_hoo": 0x1F, "punch_wah": 0x24, "waha": 0x2E, "yippee": 0x2F,
+    "ima_tired": 0x37,
 }  # fmt: skip
 
 # Bytes of operand for the commands of a script that take a fixed number: a channel's (those above

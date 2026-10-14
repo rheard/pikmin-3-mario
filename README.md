@@ -28,6 +28,9 @@ ROM while it runs.
   The small ones are squashed outright.
 - **He falls like Mario.** Walk him off a ledge and he drops in his falling pose, arms up, and
   lands in a crouch. The stick steers him on the way down.
+- **He nods off like Mario.** Play another leader and leave him standing: he yawns, he scratches,
+  he mutters "I'm-a tired", and before long he sits down and snores. Leave him longer and he lies
+  down. He wakes with a start, on his feet.
 
 Everybody else is left alone. Brittany, Charlie and the Pikmin share Alph's animation clips and
 his sound tables, and none of them moves or sounds any different.
@@ -176,7 +179,7 @@ differently.
 
 ### Falling
 
-The last step so far was what happens when he walks off a ledge.
+Next came what happens when he walks off a ledge.
 
 **A leader never falls, as far as the game is concerned.** Walk Alph off a ledge and he keeps
 walking: the game goes on choosing his clip by his speed over the ground, so he strides through
@@ -193,6 +196,40 @@ he touches down is the double jump.
 
 That took 42 more words of ARM, and five instructions of the jump's own code that now call them.
 
+### Falling asleep
+
+Then there was what he does when you are not playing him at all.
+
+**A leader left standing is never just left standing.** Switch to another leader and the game
+keeps the first one busy: every so often it gives him a clip to play once, a yawn or a look
+around, and every so often a rest, in which he sits down and may be laid down to sleep. All of
+those are clips the Pikmin share, and Mario's fifteen bones have nothing to do in any of them. So
+he froze in his T-pose a couple of times, and then sat down a little above the ground.
+
+**Super Mario 64 already knew what he should do.** Leave Mario alone on the N64 and he falls
+asleep, and that is nine animations, each ending where the next begins: he droops, he scratches,
+he yawns, he sits down, he sleeps sitting, he lies down, he sleeps lying, and from either sleep he
+wakes with a start. They map onto the game's own idea of resting almost one for one. The clip to
+play once is his yawn or his scratch, in turn. Where the game sits Alph down, he sits down and
+nods off. Where the game lays a leader down, he lies down.
+
+**Two of them had nowhere to go.** On the N64 the yawn leads into the sitting down, so nothing
+brings him back to standing after it, and the same goes for the scratch. Here each has to end
+where it began, so its first frames are eased in from his stance and its last frames eased back
+into it.
+
+**He wakes up standing, and the leaders wake up sitting.** The game's sleeping clip ends with the
+leader sat up, and the game puts him back into his sitting clip from there. Mario's ends with him
+on his feet. So when his clip finishes, the new code answers the game's question for him: he was
+not lying down, he was sitting, and he has got up. The rest is then over, by the game's own rules.
+
+He says what he said in 1996, too: "I'm-a tired" as he scratches, a yawn, and a snore in and a
+snore out for as long as he sits asleep. The first two are set as quiet as the leaders' own
+noises when they are left standing, and the snores are faint recordings to begin with, so that a
+Mario you are not playing does not talk over whoever you are.
+
+That took 32 more words of ARM, six more changed instructions of the game, and four more clips.
+
 ## What's in here
 
 | | |
@@ -202,7 +239,7 @@ That took 42 more words of ARM, and five instructions of the jump's own code tha
 | `mario/model.py` | The skeleton, the mesh, the clips |
 | `mario/voice.py` | What he says, and when |
 | `mario/icons.py` | The HUD and menu pictures |
-| `mario/moves.py`, `mario/asm/` | The new code: the punches, the jumps and the fall, in ARM assembly |
+| `mario/moves.py`, `mario/asm/` | The new code: the punches, the jumps, the fall and the falling asleep, in ARM assembly |
 | `mario/arm.py` | The assembler |
 | `tests/` | `pytest`. Most run anywhere; set `SM64_ROM` and `PIKMIN3_ROMFS` to also build the mod and read it back the way the game will |
 

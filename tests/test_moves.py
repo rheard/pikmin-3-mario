@@ -18,19 +18,48 @@ def called(address: int, word: int) -> int | None:
 def test_the_builders_agree_on_the_clips():
     """The code counts clips in the order the model adds them, and every line of voice has a clip."""
     assert tuple(model.MOVES) == moves.CLIPS
-    assert {clip for clip, _ in voice.MOVES} | {clip for clip, _ in voice.JUMPS} <= set(model.MOVES)
+    spoken = {clip for clip, _ in voice.MOVES} | {clip for clip, _ in voice.JUMPS} | {line[0] for line in voice.IDLE}
+    assert spoken <= set(model.MOVES)
+    for clip, frame, _, _ in voice.IDLE:  # and what he says left standing is said on a frame its clip has
+        assert 0 <= frame < len(model.move_steps(model.MOVES[clip]))
 
 
 def test_program_fits_its_room():
     """All the code is inside the unused stretches; only the hooks are outside."""
     words = moves.program(FIRST_CLIP, model.HEIGHT)
     hooks = sorted(address for address in words if not moves.in_room(address))
-    assert len(hooks) == 10
-    for address in hooks:  # each changed word of the game's is a call into the new code
+    assert len(hooks) == 16
+    sitting = 0xE3A00000 | (FIRST_CLIP + moves.CLIPS.index("m_sit"))  # "mov r0, #" and his sitting clip's number
+    assert [words[address] for address in hooks].count(sitting) == 3
+    for address in hooks:  # every other changed word of the game's is a call into the new code
+        if words[address] == sitting:
+            continue
         target = called(address, words[address])
         assert target is not None
         assert moves.in_room(target)
         assert target in words
+
+
+def test_left_standing_stands_alone():
+    """What he does left standing is a stretch of its own: three ways in, and one way out, into the game."""
+    words = moves.program(FIRST_CLIP, model.HEIGHT)
+    start, size = moves.ROOM["room_idle"]
+    idle = {address for address in words if start <= address < start + 4 * size}
+    assert idle
+    assert min(idle) == start
+    calls = [address for address, word in words.items() if (called(address, word) or 0) in idle]
+    assert len(calls) == 3
+    assert not any(moves.in_room(address) for address in calls)  # none of his other code calls it
+    # It names his clips in order: the two he plays in turn, his stand for the Pikmin's, and his lying down.
+    first = FIRST_CLIP + moves.CLIPS.index(moves.IDLES[0])
+    code = [words[address] for address in sorted(idle)]
+    assert 0xE28CC000 | first in code  # add r12, r12, #first
+    assert 0xE35C0000 | moves.IDLE_TURNS in code  # cmp r12, #turns
+    assert 0x03A0C000 | moves.HIS_STAND in code  # moveq r12, #his stand
+    assert 0x03A01000 | (first + moves.IDLE_TURNS + 1) in code  # moveq r1, #his lying down
+    assert moves.IDLES[moves.IDLE_TURNS :] == ("m_sit", "m_nap")
+    # Its one byte of memory is past the jump's eight.
+    assert moves.IDLE_STATE >= moves.JUMP_STATE + 8
 
 
 def test_a_fall_is_reached_through_the_jump():
@@ -61,11 +90,11 @@ def test_patch_round_trip():
 
 
 def test_clip_numbers_reach_the_code():
-    """Another place in the list changes the code, and only a handful of immediates in it."""
+    """Another place in the list changes the code, and only a dozen immediates in it."""
     here, there = moves.program(FIRST_CLIP, model.HEIGHT), moves.program(FIRST_CLIP + 1, model.HEIGHT)
     assert here.keys() == there.keys()
     changed = [address for address in here if here[address] != there[address]]
-    assert 0 < len(changed) < 10
+    assert len(changed) == 12  # seven for his punches, jumps and fall, and five for what he does left standing
     assert all((here[address] ^ there[address]) < 0x100 for address in changed)
 
 

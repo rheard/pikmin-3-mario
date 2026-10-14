@@ -25,6 +25,7 @@ What is here:
   old one in place. `user_field` and `with_fields` read and set what Pikmin 3 keeps in a sound's two
   spare numbers (`USER_FIELDS`): how many variants to pick among, their weights, and which of
   several runs of sounds is played according to who is making the sound (`TYPE_SLOTS`).
+* `labels` reads the names the archive gives its sounds, which is how one of the game's own is found.
 * `Group` reads a group file, and `Group.append` gives a new one with files added at the end.
 * `make_wave`, `make_wave_archive` and `make_wave_sounds` write the three files a new wave sound
   needs; `read_wave`, `read_wave_archive` and `read_wave_sounds` read them, the game's own included.
@@ -126,6 +127,29 @@ def _blocks(d: bytes | bytearray, base: int = 0) -> dict[int, tuple[int, int]]:
 def _pad(b: bytes, to: int) -> bytes:
     """`b` with zeros added until its length is a multiple of `to`."""
     return b + bytes(-len(b) % to)
+
+
+def labels(d: bytes | bytearray) -> dict[str, int]:
+    """
+    The names an archive gives its things, from its STRG block: a table of strings and a search tree
+    whose leaves pair a string with an item id.
+
+    Returns:
+        The item id of each name.
+    """
+    body = _blocks(d)[0x2000][0] + 8
+    table = body + s32(d, body + 4)
+    tree = body + s32(d, body + 12)
+    strings = []
+    for i in range(u32(d, table)):
+        at = table + s32(d, table + 4 + i * 12 + 4)
+        strings.append(bytes(d[at : d.index(b"\0", at)]).decode("ascii", "replace"))
+    names = {}
+    for i in range(u32(d, tree + 4)):
+        node = tree + 8 + i * 20
+        if u16(d, node) & 1:  # a leaf
+            names[strings[u32(d, node + 12)]] = u32(d, node + 16)
+    return names
 
 
 # -- the archive's tables --------------------------------------------------------------------------

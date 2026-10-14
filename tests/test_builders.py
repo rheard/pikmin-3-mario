@@ -10,7 +10,7 @@ import pytest
 
 from mario import model, voice
 from mario.errors import BuildError
-from mario.geometry import euler_matrix, matmul, matrix_euler, to_local, to_model, transpose
+from mario.geometry import between, euler_matrix, matmul, matrix_euler, to_local, to_model, transpose
 from mario.sm64.rom import Sequence
 
 CLIP_LIST = (
@@ -70,6 +70,20 @@ def test_bone_space_round_trip():
     assert back == pytest.approx(point)
 
 
+def test_a_rotation_between_two_goes_the_short_way():
+    """A share of the way from one rotation to another is that share of the turn between them."""
+    still, turned = euler_matrix(0.0, 0.0, 0.0), euler_matrix(0.8, 0.0, 0.0)
+    assert between(still, turned, 0.0) == still
+    assert between(still, turned, 1.0) == turned
+    assert close(between(still, turned, 0.25), euler_matrix(0.2, 0.0, 0.0))
+    assert close(between(turned, turned, 0.5), turned)
+    # From just short of half a turn one way to just short of it the other, the short way is through the half turn.
+    nearly, the_other_way = euler_matrix(3.0, 0.0, 0.0), euler_matrix(-3.0, 0.0, 0.0)
+    assert close(between(nearly, the_other_way, 0.5), euler_matrix(math.pi, 0.0, 0.0))
+    tilted = between(euler_matrix(0.3, -1.1, 2.0), euler_matrix(-0.4, 0.6, 1.0), 0.4)
+    assert close(matmul(tilted, transpose(tilted)), still)  # and it is a rotation
+
+
 def test_moves_are_added_to_the_end_of_the_list():
     """The clip list gains an entry for each move after its own, and nothing else in it changes."""
     new, first = model.define_moves(CLIP_LIST, model.MOVES)
@@ -83,7 +97,9 @@ def test_moves_are_added_to_the_end_of_the_list():
     assert (
         '\r\n\t\t3.00000000 1024 "" \r\n\t\t4.00000000 2048 "" ' in added
     )  # the first punch lands, then takes a press
-    assert model.clip_loops(new) == {"wait": (0, 19), "walk": (5, 25)}
+    # His sitting down goes round between two frames inside it, as the leaders' own sitting clip does.
+    assert '"m_sit" \r\n\t\t"m_sit" \r\n\t\t2 \r\n\t\t64.00000000 2 "" \r\n\t\t104.00000000 4 "" \r\n\t}' in added
+    assert model.clip_loops(new) == {"wait": (0, 19), "walk": (5, 25), "m_sit": (64, 104), "m_nap": (40, 90)}
 
 
 def test_a_list_that_is_not_one_is_refused():
@@ -145,9 +161,45 @@ def test_moves_are_as_long_as_their_pieces():
     assert model.move_steps(model.MOVES["m_fall"]) == [("general_fall", 0)] * 30  # one pose, held
     assert model.move_steps(model.MOVES["m_fland"]) == [("general_land", f) for f in range(9, 24)]
     for move in model.MOVES.values():
-        part, frame = model.move_spark(move)
+        spark = model.move_spark(move)
+        if spark is None:  # what he does left standing lands on nothing
+            assert move.hit is None
+            assert move.swell is None
+            continue
+        part, frame = spark
         assert part in {"right_hand", "left_hand", "right_foot"}
         assert 0 <= frame < len(model.move_steps(move))
+
+
+def test_his_sleep_goes_round_inside_its_clip():
+    """Where a clip goes round, the frame it comes back from is the frame it goes back to: the first of his sleep."""
+    for name, asleep in (("m_sit", "sleep_idle"), ("m_nap", "sleep_lying")):
+        move = model.MOVES[name]
+        steps = model.move_steps(move)
+        first, last = move.loop
+        assert 0 < first < last < len(steps) - 1
+        assert steps[first] == steps[last] == (asleep, 0)
+        assert all(which == asleep for which, _ in steps[first:last])  # one round of it, and nothing else
+        assert steps[last + 1][1] == 1  # and his waking carries on from that frame
+    assert [name for name, move in model.MOVES.items() if move.loop] == ["m_sit", "m_nap"]
+
+
+def test_an_eased_move_begins_and_ends_in_his_stand():
+    """The eased frames of a move go from the first frame of his stand to what its pieces say, and back."""
+    animations = {model.STANDS["m_wait"].pieces[0]: Turning(30, 1.0, 0.0), "turn": Turning(10, 0.0, 0.1)}
+    his = SimpleNamespace(animation=animations.__getitem__, pose=lambda turns, root: (turns["head"], root))
+    move = model.Move(pieces=(model.Piece("turn", 0, 9),), from_stand=4, to_stand=4)
+    # the angle he is turned by on each frame: his stand's 1.0 at both ends, the move's own in the middle
+    angles = [1.0, 0.775, 0.6, 0.475, 0.4, 0.5, 0.7, 0.85, 0.95, 1.0]
+    poses = model.move_poses(his, move)
+    assert len(poses) == len(angles)
+    for (turn, root), angle in zip(poses, angles, strict=True):
+        assert close(turn, euler_matrix(angle, 0.0, 0.0))
+        assert root == pytest.approx((0.0, angle, 0.0))
+    plain = model.move_poses(his, model.Move(pieces=(model.Piece("turn", 0, 9),)))
+    assert [turns for turns, _ in plain] == [(0.1 * frame, 0.0, 0.0) for frame in range(10)]  # as his animation has it
+    with pytest.raises(BuildError):
+        model.move_poses(his, model.Move(pieces=(model.Piece("turn", 0, 9),), from_stand=5, to_stand=4))
 
 
 def tone(frequency: float, rate: int, count: int = 4000) -> list[int]:

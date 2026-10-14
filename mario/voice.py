@@ -1,5 +1,6 @@
 """
-Mario's voice: what he says when he throws a Pikmin, punches, kicks, jumps and lands.
+Mario's voice: what he says when he throws a Pikmin, punches, kicks, jumps and lands, and as he
+falls asleep when he is left standing.
 
 What is written
 ---------------
@@ -22,6 +23,8 @@ How, all of it data the game already reads
   volley.
 * **What.** The sounds themselves are new: a wave archive and a wave sound file added to the end of
   the group file, and entries for them added to the sound archive. No stock sound is touched.
+* **How loud.** As loud as the leaders' punch grunt, which is a shout. What he says while he falls
+  asleep, left standing, is as quiet as what the leaders themselves say then.
 """
 
 from __future__ import annotations
@@ -73,10 +76,22 @@ JUMPS = (
     ("m_jump3", (("yahoo", 3), ("waha", 1), ("yippee", 1))),
     ("m_land3", (("haha", 1),)),
 )
+# Left standing, as his own game has him say it while he falls asleep: "I'm-a tired" as his
+# scratching begins, his yawn as his yawn begins, and a snore in and a snore out on frames 2 and 20
+# of each round of his sleeping sitting. Each is a clip, the frame of it, the sound, and the game's
+# own sound it is as loud as: a leader's yawn, or the other thing a leader left standing says, which
+# are both much quieter than a shout. The snores are as loud as his other lines; they are faint
+# recordings.
+IDLE = (
+    ("m_scratch", 50, "ima_tired", "WSD_Player{}Vo_LookFor"),
+    ("m_yawn", 0, "yawning", "WSD_Player{}Vo_FreeAkubi"),
+    ("m_sit", 66, "snoring1", None),
+    ("m_sit", 84, "snoring2", None),
+)
 # The jumps' sounds are five seconds in all, and every sound of the game's is loaded into one pool
-# of memory at start-up whose spare room is not known. They are kept at half the rate the others are
-# made at, which halves their size: his samples are recorded at 13 to 17 kHz, so nothing that was in
-# them is above what 16 kHz holds.
+# of memory at start-up whose spare room is not known. They, and everything added since, are kept
+# at half the rate the first ones are made at, which halves their size: his samples are recorded at
+# 13 to 19 kHz, so next to nothing that was in them is above what 16 kHz holds.
 JUMP_RATE = 16000
 
 
@@ -94,11 +109,21 @@ class Line:
     One thing he says: at `frame` of the clip tagged `clip`, one of `takes`, picked by weight.
 
     `gap` and `gap_spread` keep it from being said again for that many frames, and up to that many
-    more at random.
+    more at random. `like` names one of the game's own sounds that it is to be as loud as; without
+    it, it is as loud as the leaders' punch grunt.
     """
 
-    def __init__(self, clip: str, frame: int, takes: list[Take], gap: int = 0, gap_spread: int = 0):
+    def __init__(
+        self,
+        clip: str,
+        frame: int,
+        takes: list[Take],
+        gap: int = 0,
+        gap_spread: int = 0,
+        like: str | None = None,
+    ):
         self.clip, self.frame, self.takes, self.gap, self.gap_spread = clip, frame, list(takes), gap, gap_spread
+        self.like = like
         self.name = f"Pikmin/{clip}/LeaderVoice/{frame}"
 
 
@@ -134,10 +159,8 @@ def lines(voice: Voice) -> list[Line]:
     Everything he says, rendered from the ROM.
 
     Returns:
-        A line for the throw, then one for each move, then one for each jump.
-
-    Raises:
-        BuildError: If a jump's sound is not made at the rate `halve` expects.
+        A line for the throw, then one for each move, then one for each jump, then those of what
+        he says left standing.
     """
     clip, frame, said = THROW
     takes = [Take(name, weight, *_sound(voice, name)) for name, weight in said]
@@ -145,13 +168,9 @@ def lines(voice: Voice) -> list[Line]:
     for clip, name in MOVES:
         out.append(Line(clip, 0, [Take(name + "_whole", 1, *_sound(voice, name, whole=True))]))
     for clip, said in JUMPS:
-        takes = []
-        for name, weight in said:
-            samples, rate = _sound(voice, name)
-            if rate != 2 * JUMP_RATE:
-                raise BuildError(f"{name} is made at {rate} Hz, not twice {JUMP_RATE}")
-            takes.append(Take(name, weight, halve(samples), JUMP_RATE))
-        out.append(Line(clip, 0, takes))
+        out.append(Line(clip, 0, [kept(voice, name, weight) for name, weight in said]))
+    for clip, frame, name, like in IDLE:
+        out.append(Line(clip, frame, [kept(voice, name)], like=like and like.format(LEADER)))
     return out
 
 
@@ -159,6 +178,22 @@ def _sound(voice: Voice, name: str, *, whole: bool = False) -> tuple[list[int], 
     sound = voice.play(name, whole=whole)
     logger.info("  %-12s %.2f s%s", name, sound.seconds, ", with its swish" if whole else "")
     return sound.samples, sound.rate
+
+
+def kept(voice: Voice, name: str, weight: int = 1) -> Take:
+    """
+    One of his sounds at half the rate it is made at.
+
+    Returns:
+        The take, under the sound's own name.
+
+    Raises:
+        BuildError: If the sound is not made at the rate `halve` expects.
+    """
+    samples, rate = _sound(voice, name)
+    if rate != 2 * JUMP_RATE:
+        raise BuildError(f"{name} is made at {rate} Hz, not twice {JUMP_RATE}")
+    return Take(name, weight, halve(samples), JUMP_RATE)
 
 
 def picks(archive: bfsar.Archive, sound: int, slot: int) -> list[tuple[int, int]]:
@@ -198,6 +233,22 @@ def table_parts(table: bytes) -> tuple[int, bytes, int, list[bytes]]:
     end = table.index(b"\t# (OBJ)", at)
     keys = [int(k) for k in re.findall(rb"# key id\r\n\t\t\t(\d+)", table)]
     return int(match.group(1)), table[start:end], max(keys), names
+
+
+def stock_sound(names: dict[str, int], name: str) -> int:
+    """
+    One of the game's own sounds, by the name the sound archive gives it.
+
+    Returns:
+        The sound's number.
+
+    Raises:
+        BuildError: If the archive names no sound so.
+    """
+    item = names.get(name, 0)
+    if item >> 24 != SOUND_ITEM >> 24:
+        raise BuildError(f"the sound archive has no sound named {name}")
+    return item & 0xFFFFFF
 
 
 def _swap_once(text: bytes, old: bytes, new: bytes) -> bytes:
@@ -279,9 +330,11 @@ def add_voice(archive: bytes, group: bytes, table: bytes, said: list[Line]) -> t
         gap_spread=0,
         kind=0,
     )
+    named = bfsar.labels(archive)
     entries, bases = [], []
     for line in said:
         several = len(line.takes) if len(line.takes) > 1 else 0
+        loud = arc.sound(stock_sound(named, line.like))["volume"] if line.like else volume
         bases.append(sounds + len(entries))
         for slot in range(max(slots.values()) + 1):
             for k, take in enumerate(line.takes):
@@ -295,7 +348,7 @@ def add_voice(archive: bytes, group: bytes, table: bytes, said: list[Line]) -> t
                             gap=line.gap,
                             gap_spread=line.gap_spread,
                         )
-                    fields = {"index": order.index(take.name), "volume": volume, "user": user}
+                    fields = {"index": order.index(take.name), "volume": loud, "user": user}
                 else:
                     fields = {"index": silence, "volume": 0, "priority": 0, "user": plain}
                 if slot == 0 and k == 0:  # the family's first sound says how it is laid out

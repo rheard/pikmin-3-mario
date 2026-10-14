@@ -77,6 +77,36 @@ def euler_matrix(rx: float, ry: float, rz: float) -> Matrix:
     ]
 
 
+def between(a: Matrix, b: Matrix, share: float) -> Matrix:
+    """
+    The rotation `share` of the way from `a` to `b`.
+
+    It turns about one axis, the short way round: the turn that takes `a` to `b`, cut down to that
+    share of its angle.
+
+    Returns:
+        `a` at a share of 0 or less, `b` at 1 or more, and a rotation between them otherwise.
+    """
+    if share <= 0.0:
+        return [list(row) for row in a]
+    if share >= 1.0:
+        return [list(row) for row in b]
+    step = matmul(b, transpose(a))
+    angle = math.acos(max(-1.0, min(1.0, (step[0][0] + step[1][1] + step[2][2] - 1.0) / 2.0)))
+    axis = (step[2][1] - step[1][2], step[0][2] - step[2][0], step[1][0] - step[0][1])
+    length = math.sqrt(sum(c * c for c in axis))
+    if angle < 1e-9 or length < 1e-9:  # the same rotation; or half a turn exactly, which has no short way round
+        return [list(row) for row in (a if angle < 1.0 else b)]
+    x, y, z = (c / length for c in axis)
+    c, s = math.cos(angle * share), math.sin(angle * share)
+    part = [
+        [c + x * x * (1 - c), x * y * (1 - c) - z * s, x * z * (1 - c) + y * s],
+        [y * x * (1 - c) + z * s, c + y * y * (1 - c), y * z * (1 - c) - x * s],
+        [z * x * (1 - c) - y * s, z * y * (1 - c) + x * s, c + z * z * (1 - c)],
+    ]
+    return matmul(part, a)
+
+
 def matrix_euler(m: Matrix, near: Vector | None = None) -> Vector:
     """
     The angles `euler_matrix` would turn into rotation `m`.

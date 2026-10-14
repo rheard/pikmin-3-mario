@@ -1,5 +1,6 @@
 """
-The code this mod adds to the game: Mario's punch, punch, kick, his three jumps, and his fall.
+The code this mod adds to the game: Mario's punch, punch, kick, his three jumps, his fall, and what
+he does when he is left standing.
 
 Everything else the mod does is data the game already reads. A new move is new behaviour, so this
 part is code: an IPS patch of the game's program, which a loader applies before the game starts.
@@ -19,6 +20,10 @@ What the game has
   kills a Dwarf Bulborb outright. Each enemy's parameters say how many such hits it takes.
 * **No fall.** A leader who walks off an edge stays in the walk state, walking on the air, and
   cannot be steered until he lands.
+* **Things to do when nobody is playing him.** A leader left standing is given, again and again,
+  either a clip to play once (a yawn, a chat, a search, a stand or a fret, which every Pikmin
+  shares) or a rest: a sitting clip chosen by which leader he is, from which he may be laid down in
+  a sleeping clip and sat up again.
 
 What the code does, for the one leader whose model is Mario's and for nobody else
 ---------------------------------------------------------------------------------
@@ -39,14 +44,19 @@ What the code does, for the one leader whose model is Mario's and for nobody els
   jump, and the same state is entered with no leap: he holds his falling pose, the stick steers
   him, and he lands on enemies as from a jump, with a landing of its own. A press as he lands is
   the second jump. A step down too small to count never gets that far.
+* **Left standing** (`asm/idle.s`). The clip he is given to play once is his yawn or his scratch,
+  in turn, and his own stand where the game picks the stand the Pikmin share. The sitting clip is
+  his sitting down to sleep. The sleeping clip is his lying down; he wakes from that onto his
+  feet, where the leaders' clip ends sitting, so when it has finished the game is told he has got
+  up, and the rest is over.
 
 Where it lives
 --------------
-Ten words of the walk and punch states are changed to call the new code (`asm/hooks.s`). The code
-sits in stretches of the program that can never run (`ROOM`): this is a Wii U port, and the blocks
-that served the GamePad are still there behind checks that are now always false; so are the
-functions of two kinds of mission rule that no mission in the game uses. Ten bytes at the end of
-the program's zeroed memory hold its state.
+Sixteen words of the game are changed (`asm/hooks.s`): thirteen call the new code, and three are
+the number of Alph's sitting clip. The code sits in stretches of the program that can never run
+(`ROOM`): this is a Wii U port, and the blocks that served the GamePad are still there behind
+checks that are now always false; so are the functions of two kinds of mission rule that no
+mission in the game uses. Eleven bytes at the end of the program's zeroed memory hold its state.
 
 The patch fits one build of the game (`BUILD_ID`) and is named after it, so a loader will not apply
 it to any other.
@@ -72,7 +82,7 @@ logger = logging.getLogger(__name__)
 BUILD_ID = "D467F5AD367BBEE88C51F8C468143CF23486A44B"  # the program of Pikmin 3 Deluxe 1.2.0
 BASE = 0x60000000  # what the addresses here count from; a patch counts from 0x100 before the code's start
 ASM = Path(__file__).parent / "asm"
-SOURCES = ("punch", "jump", "hooks")  # assembled in this order, each seeing the labels of those before it
+SOURCES = ("punch", "jump", "idle", "hooks")  # assembled in this order, each seeing the labels of those before it
 MARIO = 8  # what a leader's actor holds at +0x81c when its model is Alph's, which is now Mario's
 
 # The clips the code plays, in the order it counts on: each is the one before plus one.
@@ -80,7 +90,13 @@ PUNCHES = ("m_punch1", "m_punch2", "m_kick")
 JUMPS = ("m_jump1", "m_jump2", "m_jump3")
 LANDINGS = ("m_land1", "m_land2", "m_land3")
 FALLS = ("m_fall", "m_fland")  # the fall, and the landing from it
-CLIPS = PUNCHES + JUMPS + LANDINGS + FALLS
+IDLES = ("m_yawn", "m_scratch", "m_sit", "m_nap")  # left standing: two to play in turn, then sitting, then lying
+IDLE_TURNS = 2
+CLIPS = PUNCHES + JUMPS + LANDINGS + FALLS + IDLES
+# The game's own clips that the code names, by their place in its list.
+THEIR_STAND = 0x1C  # the stand every Pikmin shares
+HIS_STAND = 0x21  # the leaders' own entry for standing, which plays his stand
+THEIR_NAP = 0x3B  # the clip a sitter is laid down to sleep in
 
 # The game's own functions and data that the code calls or reads, by address.
 GAME = {
@@ -97,6 +113,7 @@ GAME = {
     "release": 0x60A2D1C4,  # (slot): give it back
     "drop_pending": 0x609B9A78,  # (state machine): discard a state waiting to be entered
     "make_punch": 0x60C7C2F0,  # (state machine, 0x30): the punch state with no enemy named
+    "make_once": 0x609BD354,  # (behaviour, 1, what is asked for): start "play this clip once"
 }
 # Where the new code goes: the first address and the size in words of each stretch that cannot run.
 ROOM = {
@@ -105,15 +122,18 @@ ROOM = {
     "room_next": (0x60C50438, 29),
     "room_reach": (0x60C5CABC, 27),
     "room_jump": (0x60E422A8, 342),  # the functions of mission rule types 1 and 2, which no mission uses
-    "room_fall": (0x60E375E4, 236),  # more of those functions
+    "room_fall": (0x60E375E4, 42),  # more of those functions: one stretch of 236 words, shared out
+    "room_idle": (0x60E3768C, 194),
 }
 # The code's memory, past the program's last variable. The punches: moves made so far, and "a press
 # is being taken". The jump: what was asked for (1 a jump, 2 a fall); what this state is, in the same
 # numbers; which of the three jumps; 1 in the air, 2 landing; frames of that (two bytes; while he
 # walks, his frames off the ground); frames left in which a press is the next jump up; and the
-# body's "on the ground" byte while the steering borrows it.
+# body's "on the ground" byte while the steering borrows it. Left standing: which of the things he
+# does in turn was the last.
 PUNCH_STATE = 0x61EB7F00
 JUMP_STATE = 0x61EB7F08
+IDLE_STATE = 0x61EB7F10
 JUMP_BYTES = {"ASKED": 0, "IS_JUMP": 1, "WHICH": 2, "PHASE": 3, "FRAMES": 4, "WINDOW": 6, "GROUND": 7}
 
 # A leader's punch: a sphere of `radius` centred `ahead` of him is searched for enemies, and the
@@ -219,6 +239,14 @@ def symbols(first_clip: int, height: float) -> dict[str, int]:
         "JUMP_CLIP": first_clip + len(PUNCHES),
         "LAND_CLIP": first_clip + len(PUNCHES) + len(JUMPS),
         "FALL_CLIP": first_clip + len(PUNCHES) + len(JUMPS) + len(LANDINGS),
+        "IDLE_STATE": IDLE_STATE,
+        "IDLE_CLIP": first_clip + CLIPS.index(IDLES[0]),
+        "IDLE_TURNS": IDLE_TURNS,
+        "SIT_CLIP": first_clip + CLIPS.index("m_sit"),
+        "NAP_CLIP": first_clip + CLIPS.index("m_nap"),
+        "THEIR_STAND": THEIR_STAND,
+        "HIS_STAND": HIS_STAND,
+        "THEIR_NAP": THEIR_NAP,
         "SETTLE": SETTLE,
         "LONGEST": LONGEST,
         "CHAIN": CHAIN,
@@ -339,9 +367,8 @@ def build(mod: Mod, first_clip: int, height: float) -> None:
     heights = [leap(speed, height)[1] for speed in SM64["jumps"]]
     code = sum(in_room(address) for address in words)
     logger.info(
-        "his moves: %d words of code in %d unused stretches of the program, called from %d changed words",
+        "his moves: %d words of code in unused stretches of the program, reached through %d changed words",
         code,
-        len(ROOM),
         len(words) - code,
     )
     logger.info(
@@ -361,5 +388,10 @@ def build(mod: Mod, first_clip: int, height: float) -> None:
         "  his fall: %d frames after he walks off an edge, by when he has dropped %.1f units",
         FALL_AFTER,
         fall_drop(),
+    )
+    logger.info(
+        "  left standing: %s in turn, %s where the leaders sit and %s where they lie down",
+        " and ".join(IDLES[:IDLE_TURNS]),
+        *IDLES[IDLE_TURNS:],
     )
     mod.write_patch(BUILD_ID, ips(words))
