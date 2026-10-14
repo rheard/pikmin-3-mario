@@ -409,6 +409,65 @@ def test_the_pictures_are_redrawn_in_place(rom: Rom, romfs: RomFs, mod: RomFs):
             assert sum(off) / len(off) < 6  # the same silhouette, to within the fewer points per pixel
 
 
+def sections(data: bytes) -> list[tuple[int, bytes]]:
+    """Where each section of a layout, or of a layout's animation, starts, and its kind."""
+    found = []
+    at = struct.unpack_from("<H", data, 6)[0]
+    for _ in range(struct.unpack_from("<H", data, 0x10)[0]):
+        found.append((at, data[at : at + 4]))
+        at += struct.unpack_from("<I", data, at + 4)[0]
+    return found
+
+
+def done_to(animation: bytes, panes: set[str]) -> set[bytes]:
+    """The kinds of thing a layout's animation does to the named panes (`FLPA` is moving, turning and sizing one)."""
+    kinds = set()
+    for at, kind in sections(animation):
+        if kind != b"pai1":
+            continue
+        count, table = struct.unpack_from("<HI", animation, at + 0xE)
+        for k in range(count):
+            entry = at + struct.unpack_from("<I", animation, at + table + 4 * k)[0]
+            if animation[entry : entry + 28].split(b"\0")[0].decode("latin-1") in panes:
+                for j in range(animation[entry + 28]):
+                    tag = entry + struct.unpack_from("<I", animation, entry + 32 + 4 * j)[0]
+                    kinds.add(animation[tag : tag + 4])
+    return kinds
+
+
+def test_only_his_light_goes_out_in_the_versus_menu(romfs: RomFs, mod: RomFs):
+    """The light of his antenna is switched off over his picture, in two bytes a pane, and no other layout changes."""
+    file = f"{icons.LAYOUTS}/vsselect.szs"
+    old, new = icons.Layout("vsselect", romfs.read(file)), icons.Layout("vsselect", mod.read(file))
+    before = sarc.Sarc(old.plain[old.inner[0] : old.inner[1]]).files()
+    after = sarc.Sarc(new.plain[new.inner[0] : new.inner[1]]).files()
+    assert list(after) == list(before)
+    theirs, his = before[icons.LIGHT_LAYOUT], after[icons.LIGHT_LAYOUT]
+    panes = icons.light_panes(theirs)
+    assert len(panes) == 4  # a glow and the light under it, for his picture and for its reflection
+    assert icons.light_panes(his) == panes
+    switches = {at + offset for at, _ in panes for offset in (icons.PANE_FLAGS, icons.PANE_ALPHA)}
+    assert len(his) == len(theirs)
+    assert {i for i in range(len(theirs)) if theirs[i] != his[i]} == switches
+    for at, _ in panes:
+        assert theirs[at + icons.PANE_FLAGS] & 1  # it was drawn
+        assert his[at + icons.PANE_FLAGS] == theirs[at + icons.PANE_FLAGS] & 0xFE
+        assert his[at + icons.PANE_ALPHA] == 0
+    for name, data in before.items():
+        if name not in {icons.LIGHT_LAYOUT, icons.TEXTURES}:
+            assert after[name] == data
+    # It stays off only if nothing switches it on again: the picture's own animations move those panes and no more.
+    names = {name for _, name in panes}
+    moving = [data for name, data in before.items() if name.startswith("anim/PaAnimIconPlayerA_00_")]
+    assert moving
+    assert all(done_to(animation, names) <= {b"FLPA"} for animation in moving)
+    # No other layout archive has the light at all.
+    for other in romfs.names(icons.LAYOUTS, ".szs"):
+        layout = icons.Layout(other, romfs.read(other))
+        if layout.inner and not other.endswith("vsselect.szs"):
+            assert icons.put_out_light(layout, layout.plain) == (layout.plain, 0)
+
+
 # -- the code --------------------------------------------------------------------------------------
 
 

@@ -117,6 +117,12 @@ software renderer in here that shades Mario the way his own game does and paints
 again at the right size, expression and angle. The picture on the D-pad menu is the 16-pixel head
 from Super Mario 64's own HUD.
 
+**One light was still on.** In the Bingo Battle menu each leader's picture has the light of his
+antenna drawn over it, a glow that the menu's animations move about with his head. Mario has no
+antenna, and the light went on bobbing over his cap. It is not part of any picture, so painting
+over the pictures never touched it: it is four panes of the one small layout that holds Alph's
+picture there, and it is switched off by marking those four not to be drawn. Eight bytes.
+
 ### Adding Mario's punch-punch-kick mechanic
 
 While punching doesn't come up much in Pikmin 3, this seemed like it would serve as a good test

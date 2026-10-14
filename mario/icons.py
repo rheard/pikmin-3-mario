@@ -20,14 +20,17 @@ each layout archive's one texture file (`lyt/<name>.szs`, then `<name>.arc`, the
 What is written
 ---------------
 Every layout archive that has any of those, with each one drawn again as Mario at the same size and
-encoded over the old picture in place: same texture, same format, same bytes of file. No layout is
-touched, and the other leaders' pictures are byte for byte the game's.
+encoded over the old picture in place: same texture, same format, same bytes of file. The other
+leaders' pictures are byte for byte the game's, and so is every layout but one.
 
 * The heads, the bust, the standing figure and the loops are his own model from the ROM, shaded the
   way his game shades him. His eyes are one of the eight textures the game switches between, chosen
   per expression in `FACES`.
 * The left-facing head and the map emblem are the head from Super Mario 64's own HUD, the one beside
   the count of lives: 16x16 in the ROM, enlarged by whole pixels and not smoothed.
+* The one layout: in the versus menu the light of Alph's antenna is drawn over his tall picture, a
+  glow that the picture's animations move about with his head. Mario has no antenna, so that light
+  is switched off: its panes in Alph's own layout are marked not to be drawn (`put_out_light`).
 
 An archive is not compressed again: the stock stream is kept but for the stretches that cover the
 changed textures, so a 70 MB archive takes seconds and comes out a few KB larger.
@@ -38,6 +41,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import struct
 
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
@@ -113,6 +117,16 @@ BIG_JUMP_LAND = ("land_single_jump", 24.0, 37.0)
 GLYPH = 16  # the size of the head in his own game's HUD
 EMBLEM_ZOOM = 3  # the map emblem: the HUD head at this many pixels a pixel, with a shadow
 EMBLEM_SHADOW = ((-3, 3), (72, 8, 8))
+
+# The light of the leader's antenna in the versus menu. His tall picture there is a small layout of
+# its own, with the picture twice (itself and its reflection) and over the head of each a glow, with
+# the light itself under it as a part. A layout is a run of sections; a pane is a section of at
+# least 0x54 bytes with its flags 8 bytes in (bit 0: it is drawn), its opacity 10 in and its name
+# 12 in.
+LIGHT_LAYOUT = "blyt/PaAnimIconPlayerA_00.bflyt"
+LIGHT_PANES = (re.compile(r"P_Player[A-E]glow_\d\d$"), re.compile(r"Pa_PlayerLight_\d\d$"))
+PANES = (b"pan1", b"pic1", b"txt1", b"wnd1", b"bnd1", b"prt1")
+PANE_SIZE, PANE_FLAGS, PANE_ALPHA, PANE_NAME = 0x54, 8, 10, 12
 
 Pixel = tuple[int, int, int, int]
 Rows = list[list[Pixel]]
@@ -348,6 +362,8 @@ class Layout:
     Attributes:
         raw: The `.szs` file.
         plain: The archive inside it.
+        inner: The first and last byte, within `plain`, of the archive in it that holds its layouts
+            and its texture file, or None if it has none.
         where: The first and last byte of its texture file within `plain`, or None if it has none.
         textures: The textures of that file, by name.
     """
@@ -356,14 +372,14 @@ class Layout:
         self.name, self.raw = name, raw
         self.plain = yaz0.decompress(raw)
         outer = sarc.Sarc(self.plain)
-        self.where = None
+        self.inner = self.where = None
         for _, start, end in outer.entries if outer.is_archive else []:
             if self.plain[start : start + 4] != b"SARC":
                 continue
             inner = sarc.Sarc(self.plain[start:end])
             if TEXTURES in inner.sizes():
                 lo, hi = inner.span(TEXTURES)
-                self.where = (start + lo, start + hi)
+                self.inner, self.where = (start, end), (start + lo, start + hi)
         self.textures = bntx.Bntx(self.plain[self.where[0] : self.where[1]]).textures if self.where else {}
 
 
@@ -425,6 +441,62 @@ def redraw(layout: Layout, artist: Artist) -> tuple[bytes, list[tuple[bntx.Textu
     return layout.plain[:lo] + bytes(data) + layout.plain[hi:], drawn
 
 
+def light_panes(layout: bytes) -> list[tuple[int, str]]:
+    """
+    The panes of the leader's antenna light in the layout of his picture in the versus menu.
+
+    Returns:
+        Where each one starts in the layout, and its name: the glows, and the lights under them.
+
+    Raises:
+        BuildError: If the file is not a layout.
+    """
+    if layout[:4] != b"FLYT" or len(layout) < 0x14:
+        raise BuildError(f"{LIGHT_LAYOUT} is not a layout")
+    panes = []
+    at = struct.unpack_from("<H", layout, 6)[0]
+    for _ in range(struct.unpack_from("<H", layout, 0x10)[0]):
+        size = struct.unpack_from("<I", layout, at + 4)[0] if at + 8 <= len(layout) else 0
+        if size < 8 or at + size > len(layout):
+            raise BuildError(f"{LIGHT_LAYOUT}: a section runs past the end of the file")
+        if layout[at : at + 4] in PANES and size >= PANE_SIZE:
+            name = layout[at + PANE_NAME : at + PANE_NAME + 24].split(b"\0")[0].decode("latin-1")
+            if any(pattern.match(name) for pattern in LIGHT_PANES):
+                panes.append((at, name))
+        at += size
+    return panes
+
+
+def put_out_light(layout: Layout, plain: bytes) -> tuple[bytes, int]:
+    """
+    Switch off the leader's antenna light where a layout archive draws it over his picture.
+
+    Only the versus menu's archive does. Each pane of the light is marked not to be drawn and given
+    no opacity: two bytes a pane, in place. The light itself is one part that all five leaders'
+    pictures share, and it is not touched; nor is any other leader's layout.
+
+    Returns:
+        The archive's bytes, and how many panes were switched off: none if it has no such layout.
+
+    Raises:
+        BuildError: If the layout does not have a glow, and a light under it, for each picture.
+    """
+    start, end = layout.inner
+    inner = sarc.Sarc(plain[start:end])
+    if LIGHT_LAYOUT not in inner.sizes():
+        return plain, 0
+    first, last = inner.span(LIGHT_LAYOUT)
+    panes = light_panes(plain[start + first : start + last])
+    glows = [name for _, name in panes if name.startswith("P_")]
+    if not glows or len(panes) != 2 * len(glows):
+        raise BuildError(f"{layout.name}: {LIGHT_LAYOUT} does not have a glow and a light under it for each picture")
+    data = bytearray(plain)
+    for at, _ in panes:
+        data[start + first + at + PANE_FLAGS] &= 0xFE
+        data[start + first + at + PANE_ALPHA] = 0
+    return bytes(data), len(panes)
+
+
 def build(rom: Rom, romfs: RomFs, mod: Mod) -> None:
     """
     Write every layout archive that shows the leader into the mod folder, redrawn.
@@ -440,8 +512,11 @@ def build(rom: Rom, romfs: RomFs, mod: Mod) -> None:
         if not layout.where or not plan(layout):
             continue
         plain, drawn = redraw(layout, artist)
+        plain, lights = put_out_light(layout, plain)
         mod.write(name, yaz0.patch(layout.raw, plain))
         logger.info("  %-16s %d of its %d textures", layout.name, len(drawn), len(layout.textures))
+        if lights:
+            logger.info("  %-16s the light of his antenna switched off over his picture: %d panes", "", lights)
         done += 1
     if not done:
         raise BuildError("no layout archive has a picture of the leader")
